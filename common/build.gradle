@@ -1,0 +1,19 @@
+plugins {
+    id 'java'
+}
+
+jar {
+    enabled = true
+}
+
+// Ensure Spring Boot wrapper plugin doesn't look for an entrypoint executable here
+
+
+dependencies {
+    // Only baseline dependencies required for types, web mapping, and validation annotations
+    implementation 'org.springframework.boot:spring-boot-starter-validation:3.5.13'
+    implementation 'org.springframework.boot:spring-boot-starter-web:3.5.13'
+
+    compileOnly 'org.projectlombok:lombok:1.18.30'
+    annotationProcessor 'org.projectlombok:lombok:1.18.30'
+}

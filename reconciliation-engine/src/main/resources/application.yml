@@ -1,0 +1,53 @@
+server:
+  port: 8082
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: reconciliation-service
+
+  # Database Engine Mapping (Matching our Docker Compose stack)
+  datasource:
+    url: jdbc:postgresql://localhost:5432/reconguard_db
+    username: reconguard_admin
+    password: reconguard_secure_pass
+    driver-class-name: org.postgresql.Driver
+
+  # Flyway Configuration
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  # Redis Configuration
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+  # Kafka Consumer Configuration
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      group-id: reconguard-reconciliation-group
+      # Automatically offsets back to the earliest message if a brand new group shifts up
+      auto-offset-reset: earliest
+      # Use String deserialization for message keys
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # Use Spring's trusted JSON deserializer for records
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        # Trust our internal package structures so Java can convert data streams back into records safely
+        spring.json.trusted.packages: "io.reconguard.common.model"
+
+# Diagnostic Log Profiles
+logging:
+  level:
+    root: INFO
+    io.reconguard: DEBUG
+
+# Custom Application Configs for Topics
+reconguard:
+  topics:
+    raw-transactions: reconguard.transactions.raw
+    failed-transactions: reconguard.transactions.failures

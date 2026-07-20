@@ -1,0 +1,28 @@
+plugins {
+	// The 'apply false' syntax downloads the plugins at the root level
+	// without applying them to the root project itself.
+	id 'org.springframework.boot' version '3.5.13' apply false
+	id 'io.spring.dependency-management' version '1.1.7' apply false
+	id 'java'
+}
+
+// Global configuration shared across every single module
+allprojects {
+	group = 'io.reconguard'
+	version = '0.0.1-SNAPSHOT'
+
+	repositories {
+		mavenCentral()
+	}
+}
+
+// Configuration applied ONLY to modules that inherit Java characteristics
+subprojects {
+	apply plugin: 'java'
+
+	java {
+		toolchain {
+			languageVersion = JavaLanguageVersion.of(21)
+		}
+	}
+}

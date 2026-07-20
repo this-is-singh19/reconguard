@@ -1,0 +1,6 @@
+rootProject.name = 'reconguard'
+
+include 'ingestion-service'
+include 'reconciliation-engine'
+include 'ai-diagnostic-worker'
+include 'common'
