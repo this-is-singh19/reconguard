@@ -51,9 +51,9 @@ public class TransactionFailureConsumer {
      */
     @Transactional
     @KafkaListener(
-            topics = "reconguard.transactions.failures",
-            groupId = "ai-diagnostic-worker-group",
-            containerFactory = "kafkaListenerContainerFactory"
+            topics = "${reconguard.topics.failed-transactions:reconguard.transactions.failures}",
+            groupId = "${reconguard.ai.failure-consumer.group-id:ai-diagnostic-worker-group}",
+            containerFactory = "failureKafkaListenerContainerFactory"
     )
     public void consumeFailureEvent(TransactionFailureEvent event) {
         log.info("Received failure event for processing: TxID={}, Tenant={}",

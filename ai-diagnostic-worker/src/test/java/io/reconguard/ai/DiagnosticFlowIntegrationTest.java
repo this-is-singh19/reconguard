@@ -3,9 +3,7 @@
 import io.micrometer.core.instrument.MeterRegistry;
 import io.reconguard.ai.domain.ResolutionSuggestion;
 import io.reconguard.ai.repository.ResolutionSuggestionRepository;
-import io.reconguard.common.model.MonetaryAmount;
-import io.reconguard.common.model.TransactionEvent;
-import io.reconguard.common.model.TransactionEventType;
+import io.reconguard.common.event.TransactionFailureEvent;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -71,21 +69,20 @@ class DiagnosticFlowIntegrationTest {
         String tenantId = "tenant-space-99";
         String transactionId = "tx-integration-test-001";
 
-        TransactionEvent failureEvent = new TransactionEvent(
+        TransactionFailureEvent failureEvent = new TransactionFailureEvent(
                 transactionId,
                 tenantId,
                 "ord-int-test-900",
-                new MonetaryAmount(
-                        new BigDecimal("149.99"),
-                        "EUR"
-                ),
-                TransactionEventType.PAYMENT,
+                new BigDecimal("149.99"),
+                "EUR",
+                "FAILED",
+                "Unmatched window expiration",
                 Instant.now()
         );
 
         kafkaTemplate.send(
-                "recon.transaction.failures",
-                tenantId,
+                "reconguard.transactions.failures",
+                tenantId + ":ord-int-test-900",
                 failureEvent
         );
 
