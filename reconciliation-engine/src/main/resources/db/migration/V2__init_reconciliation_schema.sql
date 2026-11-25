@@ -1,11 +1,11 @@
-CREATE TABLE tenants (
+CREATE TABLE IF NOT EXISTS tenants (
                          tenant_id VARCHAR(64) PRIMARY KEY,
                          name VARCHAR(100) NOT NULL,
                          created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                          updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE transactions (
+CREATE TABLE IF NOT EXISTS transactions (
                               transaction_id VARCHAR(64) PRIMARY KEY,
                               tenant_id VARCHAR(64) NOT NULL REFERENCES tenants(tenant_id),
                               order_id VARCHAR(64) NOT NULL,
@@ -19,13 +19,13 @@ CREATE TABLE transactions (
                               updated_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_tx_tenant_order_status
+CREATE INDEX IF NOT EXISTS idx_tx_tenant_order_status
     ON transactions(tenant_id, order_id, status);
 
-CREATE INDEX idx_tx_tenant_status
+CREATE INDEX IF NOT EXISTS idx_tx_tenant_status
     ON transactions(tenant_id, status);
 
-CREATE TABLE reconciliation_failures (
+CREATE TABLE IF NOT EXISTS reconciliation_failures (
                                          id UUID PRIMARY KEY,
                                          tenant_id VARCHAR(64) NOT NULL REFERENCES tenants(tenant_id),
                                          order_id VARCHAR(64) NOT NULL,
@@ -35,7 +35,7 @@ CREATE TABLE reconciliation_failures (
                                          created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_failures_unresolved
+CREATE INDEX IF NOT EXISTS idx_failures_unresolved
     ON reconciliation_failures(tenant_id)
     WHERE resolved = FALSE;
 

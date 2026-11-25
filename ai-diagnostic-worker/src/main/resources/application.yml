@@ -1,0 +1,68 @@
+spring:
+  application:
+    name: ai-diagnostic-worker
+
+  # Database configuration for Spring Data JPA and Flyway
+  datasource:
+    url: jdbc:postgresql://localhost:5432/reconguard_db
+    username: reconguard_admin
+    password: reconguard_secure_pass
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  # Fixed: spring.ai configuration at the root 'spring' level
+  ai:
+    model:
+      chat: none
+      embedding: ollama
+      image: none
+      moderation: none
+      audio:
+        speech: none
+        transcription: none
+
+
+    ollama:
+      base-url: http://localhost:11434
+      embedding:
+        options:
+          model: nomic-embed-text
+
+server:
+  port: 8082 # Ensure distinct port if running multiple services locally
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+      base-path: /actuator
+  endpoint:
+    prometheus:
+      enabled: true
+    health:
+      show-details: always
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        reconguard.ai.vector.search.latency: true
+        reconguard.ai.embedding.generation.latency: true
+      sla:
+        reconguard.ai.vector.search.latency: 50ms, 100ms, 250ms, 500ms
+        reconguard.ai.embedding.generation.latency: 100ms, 500ms, 1s, 2s
+
+reconguard:
+  ai:
+    provider: ollama
