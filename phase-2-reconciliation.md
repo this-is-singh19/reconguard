@@ -8,14 +8,14 @@ Project view: 10 implemented, 2 partial, 2 not implemented.
 
 ### Implemented currently
 - [x] Add reconciliation module dependencies for Kafka, Redis, JPA, PostgreSQL, and Flyway.
-- [x] Implement initial Kafka consumer.
-- [x] Implement initial Redis idempotency guard with `SETNX` and TTL.
-- [x] Implement initial Redis window buffer with 35-second TTL.
-- [x] Add the matching engine.
+- [~] Implement initial Kafka consumer. → 0F.4
+- [~] Implement initial Redis idempotency guard with `SETNX` and TTL. → 0F.4
+- [~] Implement initial Redis window buffer with 35-second TTL. → 0F.4
+- [~] Add the matching engine. → 0F.4
 - [x] Create Flyway migration for tenants, transactions, and failures.
-- [x] Replace exact amount comparison with configured tolerance comparison.
-- [x] Add timestamp tolerance matching using `TransactionEvent.timestamp`.
-- [x] Persist unresolved events during matching flow, while keeping the final unresolved/failure policy explicit.
+- [~] Replace exact amount comparison with configured tolerance comparison. → 0F.11
+- [~] Add timestamp tolerance matching using `TransactionEvent.timestamp`. → 0F.11
+- [~] Persist unresolved events during matching flow, while keeping the final unresolved/failure policy explicit. → 0F.4
 - [x] Add failure publishing for unmatched/failed events.
 
 ### Partial

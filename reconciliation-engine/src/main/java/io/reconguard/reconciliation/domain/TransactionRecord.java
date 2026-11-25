@@ -3,6 +3,7 @@ package io.reconguard.reconciliation.domain;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -26,7 +27,7 @@ public class TransactionRecord {
     @Column(name = "order_id", nullable = false)
     private String orderId;
 
-    @Column(name = "amount", nullable = false)
+    @Column(name = "amount", nullable = false, precision = 18, scale = 4)
     private BigDecimal amount;
 
     @Column(name = "currency", nullable = false)
@@ -48,6 +49,7 @@ public class TransactionRecord {
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
+    @UpdateTimestamp
     @Column(name = "updated_at")
     private Instant reconciledAt;
 

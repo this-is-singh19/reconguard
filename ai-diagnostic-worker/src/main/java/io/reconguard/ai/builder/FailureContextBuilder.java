@@ -34,6 +34,16 @@ public class FailureContextBuilder {
             context.append("Age Seconds: ").append(ageSeconds).append("\n");
         }
 
+        if (hasText(event.gateway())) {
+            context.append("Gateway: ").append(event.gateway().trim()).append("\n");
+        }
+        if (hasText(event.errorCode())) {
+            context.append("Error Code: ").append(event.errorCode().trim()).append("\n");
+        }
+        if (hasText(event.region())) {
+            context.append("Region: ").append(event.region().trim()).append("\n");
+        }
+
         if (event.failureReason() != null && !event.failureReason().isBlank()) {
             context.append("Failure Reason: ").append(event.failureReason().trim()).append("\n");
         } else {
@@ -41,6 +51,10 @@ public class FailureContextBuilder {
         }
 
         return context.toString();
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private String sanitize(String value) {

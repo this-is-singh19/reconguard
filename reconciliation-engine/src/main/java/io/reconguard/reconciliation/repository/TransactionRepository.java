@@ -38,12 +38,6 @@ WHERE
             @Param("reconciledAt") Instant reconciledAt
     );
 
-    @Query("SELECT COUNT(t) FROM TransactionRecord t WHERE t.status = :status AND t.createdAt < :cutoff")
-    long countByStatusAndCreatedAtBefore(
-            @Param("status") String status,
-            @Param("cutoff") Instant cutoff
-    );
-
     @Query("SELECT t FROM TransactionRecord t WHERE t.status = 'UNRESOLVED' AND t.createdAt < :cutoff")
     List<TransactionRecord> findStaleUnresolved(@Param("cutoff") Instant cutoff);
 

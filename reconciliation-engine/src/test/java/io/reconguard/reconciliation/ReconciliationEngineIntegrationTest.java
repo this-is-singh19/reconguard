@@ -11,7 +11,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -50,10 +50,10 @@ class ReconciliationEngineIntegrationTest {
     private TransactionRepository transactionRepository;
 
     // WindowBufferService uses RedisTemplate; IdempotencyGuard uses StringRedisTemplate. Mock both.
-    @MockBean
+    @MockitoBean
     private RedisTemplate<String, Object> redisTemplate;
 
-    @MockBean
+    @MockitoBean
     private StringRedisTemplate stringRedisTemplate;
 
     @BeforeEach

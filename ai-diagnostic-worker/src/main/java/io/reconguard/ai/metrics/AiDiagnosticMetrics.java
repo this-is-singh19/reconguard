@@ -32,7 +32,7 @@ public class AiDiagnosticMetrics {
     public void incrementFailuresProcessed(String tenantId, String status) {
         Counter.builder(METRIC_FAILURES_PROCESSED)
                 .description("Total number of transaction failure events processed by AI worker")
-                .tag("tenant_id", tenantId)
+                .tag("tenant", tenantId)
                 .tag("status", status) // success | error
                 .register(registry)
                 .increment();
@@ -41,8 +41,9 @@ public class AiDiagnosticMetrics {
     public void incrementSuggestionOutcome(String tenantId, String outcomeStatus, String category) {
         Counter.builder(METRIC_SUGGESTION_OUTCOME)
                 .description("Distribution of AI resolution suggestion outcomes")
-                .tag("tenant_id", tenantId)
-                .tag("outcome_status", outcomeStatus) // AUTO_RESOLVED | HUMAN_REVIEW_REQUIRED | UNKNOWN_PATTERN
+                .tag("tenant", tenantId)
+                .tag("outcome_status", outcomeStatus) // AUTO_RESOLVED | NEEDS_REVIEW | AUTO_CLASSIFIED
+                // category must be the KnownIssue category (low cardinality), never matchedIssueId.
                 .tag("category", category != null ? category : "NONE")
                 .register(registry)
                 .increment();
@@ -69,7 +70,7 @@ public class AiDiagnosticMetrics {
     public void recordVectorSearchLatency(long durationNanos, String tenantId) {
         Timer.builder(METRIC_VECTOR_SEARCH_LATENCY)
                 .description("Latency of pgvector HNSW similarity search queries")
-                .tag("tenant_id", tenantId)
+                .tag("tenant", tenantId)
                 .publishPercentiles(0.50, 0.95, 0.99)
                 .register(registry)
                 .record(durationNanos, TimeUnit.NANOSECONDS);

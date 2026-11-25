@@ -39,7 +39,10 @@ public class FailurePublisher {
                 event.monetaryAmount() != null ? event.monetaryAmount().currency() : null,
                 STATUS_FAILED,
                 failureReason,
-                event.timestamp()
+                event.timestamp(),
+                event.gateway(),
+                event.errorCode(),
+                event.region()
         );
 
         String key = tenantId + ":" + event.orderId();

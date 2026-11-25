@@ -2,6 +2,11 @@ spring:
   application:
     name: ai-diagnostic-worker
 
+  # Virtual threads (was only in common/, which this file shadows).
+  threads:
+    virtual:
+      enabled: true
+
   # Database configuration for Spring Data JPA and Flyway
   datasource:
     url: jdbc:postgresql://localhost:5432/reconguard_db
@@ -45,7 +50,9 @@ management:
       base-path: /actuator
   endpoint:
     prometheus:
-      enabled: true
+      # Replaces the deprecated `enabled` key. Note: /actuator/prometheus is still not served until
+      # micrometer-registry-prometheus is added to build.gradle (see C1 / 0F.27).
+      access: unrestricted
     health:
       show-details: always
   prometheus:
@@ -59,10 +66,13 @@ management:
       percentiles-histogram:
         reconguard.ai.vector.search.latency: true
         reconguard.ai.embedding.generation.latency: true
-      sla:
+      slo:
         reconguard.ai.vector.search.latency: 50ms, 100ms, 250ms, 500ms
         reconguard.ai.embedding.generation.latency: 100ms, 500ms, 1s, 2s
 
 reconguard:
   ai:
     provider: ollama
+    embedding:
+      # Must equal the vector(N) width of known_issues.embedding (V4). nomic-embed-text = 768.
+      dimension: 768

@@ -29,18 +29,4 @@ public interface KnownIssueRepository extends JpaRepository<KnownIssue, String> 
             @Param("vector") String vectorString,
             @Param("topK") int topK
     );
-
-        @Query(value = """
-        SELECT id, tenant_id, category, pattern, resolution_template, created_at 
-        FROM known_issues
-        WHERE tenant_id = :tenantId
-        ORDER BY embedding <-> CAST(:queryVector AS vector)
-        LIMIT :limit
-        """, nativeQuery = true)
-        List<KnownIssue> findSimilarIssues(
-                @Param("tenantId") String tenantId,
-                @Param("queryVector") String queryVector,
-                @Param("limit") int limit
-        );
-
 }

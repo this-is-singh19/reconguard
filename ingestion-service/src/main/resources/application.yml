@@ -7,6 +7,11 @@ spring:
   application:
     name: ingestion-service
 
+  # Virtual threads (was only in common/, which this file shadows).
+  threads:
+    virtual:
+      enabled: true
+
   # Kafka Broker & Serialization Rules
   kafka:
     bootstrap-servers: localhost:9092

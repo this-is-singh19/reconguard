@@ -27,7 +27,6 @@ dependencies {
     // Testing Stack (Inherits JUnit version safely via Spring Boot BOM)
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.kafka:spring-kafka-test'
-    testImplementation "org.assertj:assertj-core:3.27.7"
 }
 
 tasks.named('test') {

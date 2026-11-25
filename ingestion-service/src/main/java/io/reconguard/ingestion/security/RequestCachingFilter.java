@@ -26,12 +26,16 @@ public class RequestCachingFilter implements Filter {
     }
 
     // Custom internal class that safely caches the body bytes for multiple reads
-    private static class CachedBodyRequestWrapper extends HttpServletRequestWrapper {
+    public static class CachedBodyRequestWrapper extends HttpServletRequestWrapper {
         private final byte[] cachedBody;
 
         public CachedBodyRequestWrapper(HttpServletRequest request) throws IOException {
             super(request);
             this.cachedBody = request.getInputStream().readAllBytes();
+        }
+
+        public byte[] getCachedBody() {
+            return cachedBody;
         }
 
         @Override

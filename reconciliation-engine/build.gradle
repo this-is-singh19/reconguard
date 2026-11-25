@@ -31,8 +31,6 @@ dependencies {
     // Robust Test Stack
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.kafka:spring-kafka-test'
-    // Spring Kafka Test / Embedded Kafka
-    //testImplementation 'org.springframework.kafka:spring-kafka-test'
 
     // H2 Database for lightweight in-memory Integration Tests
     testImplementation 'com.h2database:h2'

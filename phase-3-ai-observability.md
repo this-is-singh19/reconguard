@@ -7,11 +7,11 @@ This phase covers the AI diagnostic worker, vector similarity search, resolution
 Project view: 6 implemented, 5 partial, 3 not implemented.
 
 ### Implemented currently
-- [x] Define the `EmbeddingService` interface and implement two backends: OpenAI `text-embedding-3-small` for production and Ollama `nomic-embed-text` for local/air-gapped use, switchable via config with zero code change.
-- [x] Implement `FailureContextBuilder` to assemble the structured text sent to the embedding model (amount, currency, gateway, error code, tenant region).
-- [x] Implement `VectorSimilaritySearchService` using pgvector cosine similarity with a `LIMIT 3` query against `known_issues`.
-- [x] Implement three-tier classification logic in `ResolutionSuggestionBuilder`: `AUTO_RESOLVED` (>= 0.90), `AUTO_CLASSIFIED` (0.75-0.90), `NEEDS_REVIEW` (< 0.75).
-- [x] Add `MDC.put("correlationId", ...)` and `MDC.put("tenantId", ...)` in a `MdcFilter` so every request and Kafka listener sets both fields before any logging occurs.
+- [~] Define the `EmbeddingService` interface and implement two backends: OpenAI `text-embedding-3-small` for production and Ollama `nomic-embed-text` for local/air-gapped use, switchable via config with zero code change. → 0F.16, 0F.5
+- [~] Implement `FailureContextBuilder` to assemble the structured text sent to the embedding model (amount, currency, gateway, error code, tenant region). → 0F.26
+- [~] Implement `VectorSimilaritySearchService` using pgvector cosine similarity with a `LIMIT 3` query against `known_issues`. → 0F.5, 0F.6
+- [~] Implement three-tier classification logic in `ResolutionSuggestionBuilder`: `AUTO_RESOLVED` (>= 0.90), `AUTO_CLASSIFIED` (0.75-0.90), `NEEDS_REVIEW` (< 0.75). → 0F.5, 0F.6
+- [~] Add `MDC.put("correlationId", ...)` and `MDC.put("tenantId", ...)` in a `MdcFilter` so every request and Kafka listener sets both fields before any logging occurs. → 0F.26 (C5)
 - [x] Add a Logback `MaskingConverter` that replaces card numbers, IBANs, and email addresses with `[MASKED]` before any appender writes.
 
 ### Partial

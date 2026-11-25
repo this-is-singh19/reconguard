@@ -9,6 +9,7 @@ import io.reconguard.ai.service.EmbeddingService;
 import io.reconguard.ai.service.ResolutionSuggestionBuilder;
 import io.reconguard.ai.service.VectorSimilaritySearchService;
 import io.reconguard.common.event.TransactionFailureEvent;
+import io.reconguard.common.logging.TransactionMdc;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
@@ -56,6 +57,23 @@ public class TransactionFailureConsumer {
             containerFactory = "failureKafkaListenerContainerFactory"
     )
     public void consumeFailureEvent(TransactionFailureEvent event) {
+        try (TransactionMdc ignored = TransactionMdc.open(
+                event.tenantId(), event.orderId(), event.transactionId())) {
+            processFailure(event);
+        }
+    }
+
+    /** KnownIssue category of the matched issue (low cardinality metric tag), or "NONE" when unmatched. */
+    static String matchedCategory(ResolutionSuggestion suggestion, List<VectorMatchProjection> topMatches) {
+        if (suggestion.getMatchedIssueId() == null || topMatches == null || topMatches.isEmpty()) {
+            return "NONE";
+        }
+        VectorMatchProjection top = topMatches.get(0);
+        String category = top.getCategory();
+        return category != null && !category.isBlank() ? category : "NONE";
+    }
+
+    private void processFailure(TransactionFailureEvent event) {
         log.info("Received failure event for processing: TxID={}, Tenant={}",
                 event.transactionId(), event.tenantId());
 
@@ -84,7 +102,7 @@ public class TransactionFailureConsumer {
             metrics.incrementSuggestionOutcome(
                     event.tenantId(),
                     suggestion.getStatus(),
-                    suggestion.getMatchedIssueId());
+                    matchedCategory(suggestion, topMatches));
 
             log.info("Successfully persisted AI diagnosis suggestion ID={} for TxID={} with Status={}",
                     suggestion.getSuggestionId(), event.transactionId(), suggestion.getStatus());

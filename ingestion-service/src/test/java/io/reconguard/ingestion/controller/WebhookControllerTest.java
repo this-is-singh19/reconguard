@@ -13,11 +13,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ContextConfiguration;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
@@ -25,6 +25,7 @@ import java.time.Duration;
 import java.time.Instant;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -34,19 +35,35 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ContextConfiguration(classes = {WebhookController.class, GlobalExceptionHandler.class})
 class WebhookControllerTest {
 
+    private static final String REDIS_KEY = "recon:ingest:idempotency:tenant-test:key-abc-123";
+
+    private static final String PAYLOAD = """
+            {
+                "transactionId": "tx-100",
+                "tenantId": "tenant-test",
+                "orderId": "order-100",
+                "monetaryAmount": {
+                    "value": 100.00,
+                    "currency": "USD"
+                },
+                "type": "PAYMENT",
+                "timestamp": "2026-08-02T20:00:00Z"
+            }
+            """;
+
     @Autowired
     private MockMvc mockMvc;
 
-    @MockBean
+    @MockitoBean
     private NormalizationService normalizationService;
 
-    @MockBean
+    @MockitoBean
     private TransactionProducer transactionProducer;
 
-    @MockBean
+    @MockitoBean
     private StringRedisTemplate redisTemplate;
 
-    @MockBean
+    @MockitoBean
     private ValueOperations<String, String> valueOperations;
 
     @BeforeEach
@@ -60,26 +77,20 @@ class WebhookControllerTest {
         TenantContext.clear();
     }
 
+    private TransactionEvent rawEvent() {
+        return new TransactionEvent(
+                "tx-100", "tenant-test", "order-100",
+                new MonetaryAmount(new BigDecimal("100.00"), "USD"),
+                TransactionEventType.PAYMENT, Instant.parse("2026-08-02T20:00:00Z")
+        );
+    }
+
     @Test
     @DisplayName("Should return 400 Bad Request RFC 7807 when X-Idempotency-Key header is missing")
     void shouldReturn400WhenIdempotencyHeaderIsMissing() throws Exception {
-        String jsonPayload = """
-                {
-                    "transactionId": "tx-100",
-                    "tenantId": "tenant-test",
-                    "orderId": "order-100",
-                    "monetaryAmount": {
-                        "value": 100.00,
-                        "currency": "USD"
-                    },
-                    "type": "PAYMENT",
-                    "timestamp": "2026-08-02T20:00:00Z"
-                }
-                """;
-
         mockMvc.perform(post("/api/v1/webhooks/transactions")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(jsonPayload))
+                        .content(PAYLOAD))
                 .andExpect(status().isBadRequest())
                 .andExpect(header().string("Content-Type", MediaType.APPLICATION_PROBLEM_JSON_VALUE))
                 .andExpect(jsonPath("$.title").value("Missing Required Header"))
@@ -87,75 +98,100 @@ class WebhookControllerTest {
     }
 
     @Test
-    @DisplayName("Should accept fresh request, save idempotency key, and publish event")
+    @DisplayName("Should accept fresh request, cache the response, and publish event")
     void shouldAcceptFreshRequestAndPublish() throws Exception {
-        String idempotencyKey = "key-abc-123";
-        String jsonPayload = """
-                {
-                    "transactionId": "tx-100",
-                    "tenantId": "tenant-test",
-                    "orderId": "order-100",
-                    "monetaryAmount": {
-                        "value": 100.00,
-                        "currency": "USD"
-                    },
-                    "type": "PAYMENT",
-                    "timestamp": "2026-08-02T20:00:00Z"
-                }
-                """;
-
-        TransactionEvent rawEvent = new TransactionEvent(
-                "tx-100", "tenant-test", "order-100",
-                new MonetaryAmount(new BigDecimal("100.00"), "USD"),
-                TransactionEventType.PAYMENT, Instant.parse("2026-08-02T20:00:00Z")
-        );
-
-        when(valueOperations.setIfAbsent(eq("recon:ingest:idempotency:tenant-test:" + idempotencyKey), eq("PROCESSED"), any(Duration.class)))
+        when(valueOperations.setIfAbsent(eq(REDIS_KEY), eq("IN_PROGRESS"), any(Duration.class)))
                 .thenReturn(Boolean.TRUE);
-        when(normalizationService.normalize(any(TransactionEvent.class))).thenReturn(rawEvent);
+        when(normalizationService.normalize(any(TransactionEvent.class))).thenReturn(rawEvent());
 
         mockMvc.perform(post("/api/v1/webhooks/transactions")
-                        .header("X-Idempotency-Key", idempotencyKey)
+                        .header("X-Idempotency-Key", "key-abc-123")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(jsonPayload))
+                        .content(PAYLOAD))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.status").value("ACCEPTED"))
                 .andExpect(jsonPath("$.duplicate").value(false))
-                .andExpect(jsonPath("$.idempotencyKey").value(idempotencyKey));
+                .andExpect(jsonPath("$.transactionId").value("tx-100"))
+                .andExpect(jsonPath("$.idempotencyKey").value("key-abc-123"));
 
         verify(transactionProducer, times(1)).sendTransactionEvent(any());
+        verify(valueOperations).set(eq(REDIS_KEY), anyString(), any(Duration.class));
     }
 
     @Test
-    @DisplayName("Should detect duplicate request, return cached ACCEPTED, and skip publishing")
-    void shouldDetectDuplicateRequestAndSkipPublishing() throws Exception {
-        String idempotencyKey = "key-abc-123";
-        String jsonPayload = """
-                {
-                    "transactionId": "tx-100",
-                    "tenantId": "tenant-test",
-                    "orderId": "order-100",
-                    "monetaryAmount": {
-                        "value": 100.00,
-                        "currency": "USD"
-                    },
-                    "type": "PAYMENT",
-                    "timestamp": "2026-08-02T20:00:00Z"
-                }
-                """;
+    @DisplayName("Should replay the original cached response for a duplicate and skip publishing")
+    void shouldReplayOriginalResponseForDuplicate() throws Exception {
+        String cached = "{\"status\":\"ACCEPTED\",\"transactionId\":\"tx-100\","
+                + "\"idempotencyKey\":\"key-abc-123\",\"duplicate\":false,"
+                + "\"processedAt\":\"2026-08-02T20:00:01Z\"}";
 
-        // Redis returns false indicating key already exists
-        when(valueOperations.setIfAbsent(eq("recon:ingest:idempotency:tenant-test:" + idempotencyKey), eq("PROCESSED"), any(Duration.class)))
+        when(valueOperations.setIfAbsent(eq(REDIS_KEY), eq("IN_PROGRESS"), any(Duration.class)))
                 .thenReturn(Boolean.FALSE);
+        when(valueOperations.get(REDIS_KEY)).thenReturn(cached);
 
         mockMvc.perform(post("/api/v1/webhooks/transactions")
-                        .header("X-Idempotency-Key", idempotencyKey)
+                        .header("X-Idempotency-Key", "key-abc-123")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(jsonPayload))
+                        .content(PAYLOAD))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.transactionId").value("tx-100"))
+                .andExpect(jsonPath("$.duplicate").value(false))
+                .andExpect(jsonPath("$.processedAt").value("2026-08-02T20:00:01Z"));
+
+        verify(transactionProducer, never()).sendTransactionEvent(any());
+    }
+
+    @Test
+    @DisplayName("Should return in-progress ACCEPTED when the first request has not cached its response yet")
+    void shouldReturnInProgressWhenNoCachedResponse() throws Exception {
+        when(valueOperations.setIfAbsent(eq(REDIS_KEY), eq("IN_PROGRESS"), any(Duration.class)))
+                .thenReturn(Boolean.FALSE);
+        when(valueOperations.get(REDIS_KEY)).thenReturn("IN_PROGRESS");
+
+        mockMvc.perform(post("/api/v1/webhooks/transactions")
+                        .header("X-Idempotency-Key", "key-abc-123")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(PAYLOAD))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.status").value("ACCEPTED"))
                 .andExpect(jsonPath("$.duplicate").value(true))
-                .andExpect(jsonPath("$.idempotencyKey").value(idempotencyKey));
+                .andExpect(jsonPath("$.idempotencyKey").value("key-abc-123"));
+
+        verify(transactionProducer, never()).sendTransactionEvent(any());
+    }
+
+    @Test
+    @DisplayName("Should release the idempotency key when publishing fails so the client can retry")
+    void shouldReleaseKeyWhenPublishFails() throws Exception {
+        when(valueOperations.setIfAbsent(eq(REDIS_KEY), eq("IN_PROGRESS"), any(Duration.class)))
+                .thenReturn(Boolean.TRUE);
+        when(normalizationService.normalize(any(TransactionEvent.class))).thenReturn(rawEvent());
+        doThrow(new IllegalStateException("kafka down"))
+                .when(transactionProducer).sendTransactionEvent(any());
+
+        try {
+            mockMvc.perform(post("/api/v1/webhooks/transactions")
+                    .header("X-Idempotency-Key", "key-abc-123")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(PAYLOAD));
+        } catch (Exception ignored) {
+            // The unhandled publish failure may surface through MockMvc; the verification below is what matters.
+        }
+
+        verify(redisTemplate).delete(REDIS_KEY);
+        verify(valueOperations, never()).set(eq(REDIS_KEY), anyString(), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("Should return 400 problem+json when request body is not valid JSON")
+    void shouldReturn400WhenBodyIsMalformedJson() throws Exception {
+        mockMvc.perform(post("/api/v1/webhooks/transactions")
+                        .header("X-Idempotency-Key", "key-malformed")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"transactionId\": \"tx-100\", "))
+                .andExpect(status().isBadRequest())
+                .andExpect(header().string("Content-Type", MediaType.APPLICATION_PROBLEM_JSON_VALUE))
+                .andExpect(jsonPath("$.title").value("Malformed Request Body"));
 
         verify(transactionProducer, never()).sendTransactionEvent(any());
     }

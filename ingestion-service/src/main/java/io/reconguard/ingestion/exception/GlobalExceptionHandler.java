@@ -1,6 +1,7 @@
 package io.reconguard.ingestion.exception;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -54,6 +55,18 @@ public class GlobalExceptionHandler {
         problemDetail.setProperty("errors", fieldErrors);
         problemDetail.setProperty("timestamp", Instant.now());
 
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(problemDetail);
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ProblemDetail> handleUnreadableBody(HttpMessageNotReadableException ex) {
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.BAD_REQUEST,
+                "Request body is missing or is not valid JSON."
+        );
+        problemDetail.setType(URI.create("https://api.reconguard.io/errors/malformed-body"));
+        problemDetail.setTitle("Malformed Request Body");
+        problemDetail.setProperty("timestamp", Instant.now());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(problemDetail);
     }
 

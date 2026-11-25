@@ -5,6 +5,11 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import java.time.Instant;
 
+/**
+ * Canonical transaction event. {@code gateway}, {@code errorCode} and {@code region} are optional
+ * (nullable) and were added after the initial contract; the 6-arg constructor keeps older call sites
+ * compiling. Older JSON payloads without these properties still deserialize (they become null).
+ */
 public record TransactionEvent(
         @NotBlank(message = "Transaction ID cannot be blank")
         String transactionId,
@@ -23,5 +28,14 @@ public record TransactionEvent(
         TransactionEventType type,
 
         @NotNull(message = "Timestamp is required")
-        Instant timestamp
-) {}
+        Instant timestamp,
+
+        String gateway,
+        String errorCode,
+        String region
+) {
+    public TransactionEvent(String transactionId, String tenantId, String orderId,
+                            MonetaryAmount monetaryAmount, TransactionEventType type, Instant timestamp) {
+        this(transactionId, tenantId, orderId, monetaryAmount, type, timestamp, null, null, null);
+    }
+}

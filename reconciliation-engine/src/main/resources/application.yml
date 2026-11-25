@@ -7,6 +7,11 @@ spring:
   application:
     name: reconciliation-service
 
+  # Virtual threads. Lives here, not in common/, because each app's own application.yml shadows common's.
+  threads:
+    virtual:
+      enabled: true
+
   # Database Engine Mapping (Matching our Docker Compose stack)
   datasource:
     url: jdbc:postgresql://localhost:5432/reconguard_db
@@ -19,31 +24,43 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  # Spring AI autoconfig comes in transitively via :ai-diagnostic-worker. The engine must not build an
+  # embedding/chat model (it would default to Spring AI's model, not nomic-embed-text). Embeddings live in the AI app.
+  ai:
+    model:
+      chat: none
+      embedding: none
+
   # Redis Configuration
   data:
     redis:
       host: localhost
       port: 6379
 
-  # Kafka Consumer Configuration
+  # Kafka. Consumer deserializers and trusted packages are set in KafkaConsumerConfig (Java owns them).
   kafka:
     bootstrap-servers: localhost:9092
     consumer:
+      # Engine consumer group. Read by the transactionEvent listener factory and the raw-topic listener.
       group-id: reconguard-reconciliation-group
       # Automatically offsets back to the earliest message if a brand new group shifts up
       auto-offset-reset: earliest
-      # Use String deserialization for message keys
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      # Use Spring's trusted JSON deserializer for records
-      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
-      properties:
-        # Trust our internal package structures so Java can convert data streams back into records safely
-        spring.json.trusted.packages: "io.reconguard.common.model"
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
       properties:
         spring.json.add.type.headers: true
+
+# Actuator (the actuator starter arrives transitively via :ai-diagnostic-worker).
+# Health details are shown so a DOWN status names the failing component (0F.30).
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
 
 # Diagnostic Log Profiles
 logging:
@@ -56,9 +73,15 @@ reconguard:
   topics:
     raw-transactions: reconguard.transactions.raw
     failed-transactions: reconguard.transactions.failures
-    matching:
-      amount-tolerance: 0.02
-      timestamp-tolerance: 120s
+
+  # Consumer group for the DLQ listener (DeadLetterConsumer)
+  kafka:
+    dlq-group-id: reconguard-dlq-group
+
+  # Bound by MatchingToleranceConfig (prefix reconguard.matching)
+  matching:
+    max-amount-difference: 0.02
+    max-time-window: 120s
 
   ai:
     provider: ollama

@@ -1,19 +1,30 @@
 plugins {
     id 'java'
+    id 'io.spring.dependency-management'
 }
 
 jar {
     enabled = true
 }
 
-// Ensure Spring Boot wrapper plugin doesn't look for an entrypoint executable here
-
+// Single version source: same Boot BOM as the root build (3.5.13), no manual pins.
+dependencyManagement {
+    imports {
+        mavenBom 'org.springframework.boot:spring-boot-dependencies:3.5.13'
+    }
+}
 
 dependencies {
-    // Only baseline dependencies required for types, web mapping, and validation annotations
-    implementation 'org.springframework.boot:spring-boot-starter-validation:3.5.13'
-    implementation 'org.springframework.boot:spring-boot-starter-web:3.5.13'
+    // Validation annotations on the shared records
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
 
-    compileOnly 'org.projectlombok:lombok:1.18.30'
-    annotationProcessor 'org.projectlombok:lombok:1.18.30'
+    // Web/servlet/logback types used by TenantInterceptor, MdcFilter, MaskingConverter.
+    // Provided by consumers (ingestion-service, reconciliation-engine, ai-diagnostic-worker);
+    // common must not pull starter-web itself.
+    compileOnly 'org.springframework:spring-webmvc'
+    compileOnly 'jakarta.servlet:jakarta.servlet-api'
+    compileOnly 'ch.qos.logback:logback-classic'
+
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
 }

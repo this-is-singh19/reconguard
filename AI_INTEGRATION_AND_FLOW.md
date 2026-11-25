@@ -4,24 +4,27 @@
 The AI part of ReconGuard does not replace reconciliation.
 
 Its job is narrower:
-- consume unresolved or failed transaction events
+- consume failed transaction events
 - build a structured failure context
 - generate an embedding for that context
 - compare it against known issues
-- produce a ranked diagnostic result or suggestion
+- classify the result and save a resolution suggestion
 
 This keeps the AI layer practical and explainable.
 
 ## Where It Sits In The Flow
-The flow is:
+Current state, the failure pipeline works end to end:
 
-1. reconciliation detects a failure or unresolved case
-2. a `TransactionFailureEvent` is produced
-3. `ai-diagnostic-worker` consumes the failure
-4. `FailureContextBuilder` creates a text summary of the failure
-5. `EmbeddingService` converts the summary into a vector
-6. `VectorSimilaritySearchService` queries known issues using pgvector
-7. the worker returns matches or stores a resolution suggestion
+1. the engine's matching flow leaves a leg unmatched and saves it as `UNRESOLVED`
+2. `WindowUnresolvedTransactionSweeper` marks legs older than 5 minutes as `FAILED`
+3. `FailurePublisher` sends a `TransactionFailureEvent` to `reconguard.transactions.failures`
+4. `ai-diagnostic-worker` consumes it in `TransactionFailureConsumer`
+5. `FailureContextBuilder` creates a text summary of the failure
+6. `EmbeddingService` (Ollama) converts the summary into a vector
+7. `VectorSimilaritySearchService` queries `known_issues` using pgvector
+8. `ResolutionSuggestionBuilder` classifies the top score and the result is saved to `resolution_suggestions`
+
+Score thresholds: at least 0.90 is `AUTO_RESOLVED`, at least 0.75 is `AUTO_CLASSIFIED`, anything lower is `NEEDS_REVIEW`.
 
 That means the AI layer is a downstream analysis step, not the primary business decision engine.
 
@@ -30,40 +33,26 @@ That means the AI layer is a downstream analysis step, not the primary business 
 ### `FailureContextBuilder`
 This class takes the raw failure event and turns it into structured text.
 
-The goal is to include the details that matter for similarity search, such as:
-- tenant
-- amount
-- currency
-- gateway
-- error or failure metadata
+The text currently includes only tenant, amount, and currency. Gateway, error code, and region are carried on the event but not yet used in the text (planned).
 
 The text is structured so the embedding model gets consistent input.
 
 ### `EmbeddingService`
 This is the abstraction over embedding generation.
 
-The project supports two implementations:
-- OpenAI for a cloud-backed setup
-- Ollama for local or air-gapped development
+Current state: the only implementation is `OllamaEmbeddingService`, selected by `reconguard.ai.provider=ollama`. The model is `nomic-embed-text`, which produces 768-dimensional vectors, matching the `vector(768)` columns.
 
-That makes the AI layer switchable without changing the rest of the application code.
+The OpenAI implementation was removed. Setting `reconguard.ai.provider=openai` matches no bean, so no `EmbeddingService` is available. Switching providers would need a code change and a migration if the dimension changes (1536 for OpenAI). Making the provider interchangeable is planned.
 
 ### `VectorSimilaritySearchService`
 This service performs the vector lookup.
 
-It sends the embedding to the repository layer and searches the `known_issues` table using pgvector similarity.
+It sends the embedding to the repository layer and searches the `known_issues` table using pgvector cosine similarity.
 
-The repository returns the top matches, ordered by similarity.
+The repository returns the top-K matches, ordered by similarity.
 
-### `DiagnosticWorkerService`
-This is the orchestration service for the AI flow.
-
-It wires together:
-- context building
-- embedding generation
-- vector search
-
-It is the class that makes the flow easy to follow from end to end.
+### Orchestration
+There is no single `DiagnosticWorkerService` class. The flow is wired inside `TransactionFailureConsumer`, which calls the context builder, embedding service, similarity search, and suggestion builder in order.
 
 ## Retrieval-Based Design
 The AI system is retrieval-first rather than generation-first.
@@ -90,7 +79,7 @@ The project currently uses cosine similarity and top-K lookup.
 A clean interview explanation is:
 
 - reconciliation cannot match a transaction cleanly
-- the failure is turned into a failure event
+- the leg is marked failed and published as a failure event
 - the AI worker builds a descriptive context
 - embeddings are created from that context
 - the system searches for related known issues
@@ -99,23 +88,23 @@ A clean interview explanation is:
 That is the complete flow without getting lost in implementation detail.
 
 ## Operational Pieces
-The AI module also includes operational support:
+The AI module includes some operational support:
 
-- metrics collection for search and diagnostic work
-- health endpoint support
-- swappable embedding providers
+- Micrometer metrics for classification outcomes (`AiDiagnosticMetrics`)
+- actuator health endpoint
 - repository-backed retrieval of known issues and suggestions
+- an embedding dimension check at startup (`EmbeddingDimensionCheck`)
 
-This matters because the AI part should be observable and easy to debug, not just “smart.”
+Planned: a Prometheus scrape endpoint. `/actuator/prometheus` is configured in the yml but is not served, because `micrometer-registry-prometheus` is not in the build yet.
 
 ## What To Mention In An Interview
 Strong talking points include:
 
 - AI is used only after a failure is detected
 - embeddings and vector search make the suggestion explainable
-- OpenAI and Ollama are interchangeable through configuration
 - the worker is intentionally narrow in scope
+- the current embedding provider is Ollama (local); switching to a cloud provider is planned, not built
 - the approach keeps the system practical and portfolio-ready
 
 ## Short Summary
-The AI integration is a downstream diagnostic pipeline that turns reconciliation failures into structured context, compares them with known issues using embeddings and pgvector, and produces a useful suggestion without changing the core reconciliation logic.
+The AI integration is a downstream diagnostic pipeline. It consumes failure events, turns them into structured context, compares them with known issues using embeddings and pgvector, and saves a classified suggestion without changing the core reconciliation logic.

@@ -144,7 +144,7 @@ class DiagnosticFlowIntegrationTest {
         assertThat(
                 meterRegistry
                         .find("reconguard.ai.failures.processed.total")
-                        .tag("tenant_id", tenantId)
+                        .tag("tenant", tenantId)
                         .counter()
                         .count()
         ).isGreaterThan(0);

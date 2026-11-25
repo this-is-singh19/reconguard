@@ -7,9 +7,9 @@ This phase fills the gaps between the guide's ingestion design and the current i
 Project view: 4 implemented, 4 partial, 2 not implemented.
 
 ### Implemented currently
-- [x] Enforce `X-Idempotency-Key` header on the webhook endpoint and return a cached `202` response for duplicate keys.
-- [x] Add RFC 7807 `application/problem+json` error responses to the ingestion endpoint, including HMAC failures.
-- [x] Configure `DefaultErrorHandler` with exponential back-off and a dead-letter topic `recon.dlq.{tenantId}` per consumer.
+- [~] Enforce `X-Idempotency-Key` header on the webhook endpoint and return a cached `202` response for duplicate keys. → 0F.26 (A4.5)
+- [~] Add RFC 7807 `application/problem+json` error responses to the ingestion endpoint, including HMAC failures. → A4.6
+- [~] Configure `DefaultErrorHandler` with exponential back-off and a dead-letter topic `recon.dlq.{tenantId}` per consumer. → 0F.13
 - [x] Add Flyway migrations for `known_issues` (V4) and `resolution_suggestions` (V5) so Phase 3 has a schema foundation to build on.
 
 ### Partial

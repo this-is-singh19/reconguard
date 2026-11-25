@@ -41,13 +41,23 @@ public class NormalizationService {
                 rawEvent.orderId().strip(),
                 safeAmount,
                 rawEvent.type(),
-                normalizedTimestamp
+                normalizedTimestamp,
+                trimToNull(rawEvent.gateway()),
+                trimToNull(rawEvent.errorCode()),
+                trimToNull(rawEvent.region())
         );
 
         log.info("Successfully normalized transaction event: ID={}, Tenant={}",
                 normalizedEvent.transactionId(), normalizedEvent.tenantId());
 
         return normalizedEvent;
+    }
+
+    private static String trimToNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.strip();
     }
 
     /**
