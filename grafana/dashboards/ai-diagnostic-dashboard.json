@@ -1,0 +1,105 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "title": "ReconGuard - AI Diagnostic Worker Metrics",
+  "tags": ["reconguard", "ai-worker", "pgvector", "micrometer"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Failures Processed Rate (ops/sec)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(rate(reconguard_ai_failures_processed_total[5m])) by (tenant_id, status)",
+          "legendFormat": "Tenant: {{tenant_id}} ({{status}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineInterpolation": "smooth" },
+          "unit": "ops"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "AI Resolution Suggestion Outcome Distribution",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "sum(increase(reconguard_ai_suggestions_outcome_total[1h])) by (outcome_status)",
+          "legendFormat": "{{outcome_status}}"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "pieType": "donut"
+      }
+    },
+    {
+      "id": 3,
+      "title": "pgvector HNSW Search Latency Percentiles",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.50, sum(rate(reconguard_ai_vector_search_latency_seconds_bucket[5m])) by (le)) * 1000",
+          "legendFormat": "p50 (ms)"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.95, sum(rate(reconguard_ai_vector_search_latency_seconds_bucket[5m])) by (le)) * 1000",
+          "legendFormat": "p95 (ms)"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.99, sum(rate(reconguard_ai_vector_search_latency_seconds_bucket[5m])) by (le)) * 1000",
+          "legendFormat": "p99 (ms)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line" },
+          "unit": "ms"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Embedding Generation Latency Percentiles",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.95, sum(rate(reconguard_ai_embedding_generation_latency_seconds_bucket[5m])) by (le, model)) * 1000",
+          "legendFormat": "p95 {{model}} (ms)"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "expr": "histogram_quantile(0.99, sum(rate(reconguard_ai_embedding_generation_latency_seconds_bucket[5m])) by (le, model)) * 1000",
+          "legendFormat": "p99 {{model}} (ms)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line" },
+          "unit": "ms"
+        }
+      }
+    }
+  ]
+}

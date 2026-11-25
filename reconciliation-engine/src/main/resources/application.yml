@@ -1,5 +1,5 @@
 server:
-  port: 8082
+  port: 8080
   servlet:
     context-path: /
 
@@ -39,6 +39,11 @@ spring:
       properties:
         # Trust our internal package structures so Java can convert data streams back into records safely
         spring.json.trusted.packages: "io.reconguard.common.model"
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: true
 
 # Diagnostic Log Profiles
 logging:
@@ -51,3 +56,9 @@ reconguard:
   topics:
     raw-transactions: reconguard.transactions.raw
     failed-transactions: reconguard.transactions.failures
+    matching:
+      amount-tolerance: 0.02
+      timestamp-tolerance: 120s
+
+  ai:
+    provider: ollama

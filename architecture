@@ -1,0 +1,595 @@
+Real-Time Multi-Tenant Financial Reconciliation
+& Anomaly Guard
+Architecture & Implementation Guide
+A production-ready architecture guide for building a high-volume SaaS financial reconciliation engine with AI-powered
+anomaly classification. Target: 1,000+ events/sec/tenant, sub-second reconciliation latency, 99.99% idempotency
+accuracy, 80%+ automated error classification.
+Tech Stack
+Backend
+Messaging
+Primary DB
+Cache / Locking
+AI Orchestration
+DevOps
+Observability
+Components
+Java 21 (Virtual Threads/Project Loom), Spring Boot 3.3+
+Apache Kafka — Event Sourcing & Stream Processing
+PostgreSQL 16 with pgvector (metadata + AI embeddings)
+Redis — Distributed locking, rate limiting, idempotency
+LangChain4j + OpenAI text-embedding-3-small / Ollama
+Kubernetes (K8s), Jenkins Declarative Pipelines, Docker
+Micrometer Tracing, Prometheus, Grafana
+Testing
+JUnit 5, Mockito, Testcontainers
+1. High-Level Architecture Overview
+Key Data Flows
+Happy path: Order event fi tx.orders.{tenantId} fi Window Matcher pairs it with a payment event fi MATCHED
+status written to transactions fi idempotency key expired from Redis.
+Failure path: No payment event arrives within the 30s window fi failure published to recon.failures.{tenantId} fi AI
+Diagnostic Worker consumes it, generates an embedding, runs cosine similarity against known_issues in pgvector fi
+top-K matches returned fi resolution suggestion stored and surfaced via the Management API.
+Architecture Tiers
+The system is organized into five horizontal tiers:
+• Ingestion Tier: Order DB CDC (Debezium/JDBC), Webhook Ingestor (HMAC-verified HTTP), Management API
+(REST/JWT OAuth2)
+• Kafka Event Bus: tx.orders.{tenantId}, tx.payments.{tenantId}, recon.failures.{tenantId}
+• Reconciliation Engine: Window Matcher (30s tumbling window), Idempotency Guard (Redis SETNX + TTL)
+• Database Tier: PostgreSQL partitioned by tenant — transactions table + reconciliation_failures with pgvector
+HNSW index
+• AI Diagnostic Worker: Embedding Generator (LangChain4j + OpenAI), Similarity Search (pgvector cosine,
+top-K)
+Scalability Rationale
+Each tenant's Kafka topics are partitioned by transactionId (consistent hashing), ensuring ordering guarantees per
+transaction while allowing horizontal consumer scaling. Java 21 virtual threads allow the reconciliation engine to block
+on I/O (Redis, PostgreSQL) without exhausting OS threads — this is the primary reason for choosing Project Loom
+over reactive programming, which would have imposed a more complex programming model.
+2. Component Breakdown
+2.1 Ingestion Service
+Responsibilities: Accept transactional events from two distinct sources — internal Order DB (via CDC/JDBC) and
+external Payment Gateway webhooks — validate, enrich with tenant context, and publish to Kafka.
+Tech choices:
+• Spring Boot 3.3 with spring-kafka. Producer configured with acks=all and enable.idempotence=true for
+exactly-once delivery to the broker.
+• HMAC-SHA256 verification on all incoming webhooks before any downstream processing, using a per-tenant
+secret stored in Kubernetes Secrets.
+• Virtual threads for the HTTP server thread pool — each webhook request gets its own virtual thread.
+Internal Architecture
+WebhookController (VT HTTP server)
+nnn HmacVerificationFilter
+nnn PayloadNormalizationService
+nnn KafkaTransactionProducer
+REST Endpoint
+‹ tenant secret lookup from cache
+‹ maps gateway-specific schemas fi canonical TransactionEvent
+‹ publishes with tenantId header + idempotency key
+POST /api/v1/webhooks/{tenantId}/payment
+Headers:
+  X-Webhook-Signature: sha256=<hmac>
+  X-Idempotency-Key: <uuid>
+Body:
+{
+}
+  "gateway_transaction_id": "string",
+  "amount": "number",
+  "currency": "string (ISO 4217)",
+  "status": "string",
+  "timestamp": "ISO-8601"
+Response 202 Accepted:
+{
+  "ingestion_id": "uuid",
+  "received_at": "ISO-8601"
+}
+Error (RFC 7807):
+{
+  "type": "https://api.reconguard.io/errors/hmac-failure",
+  "title": "HMAC verification failed",
+  "status": 401,
+  "detail": "Signature mismatch for tenant acme-corp",
+  "instance": "/api/v1/webhooks/acme-corp/payment"
+}
+2.2 Reconciliation Engine
+Responsibilities: Consume from tx.orders.* and tx.payments.*, perform windowed matching, write results to
+PostgreSQL, publish unmatched events to recon.failures.*.
+Idempotency design: Before processing any event, the engine executes Redis SETNX
+reconguard:idem:{tenantId}:{msgId} 1 EX 86400. If the key already exists, the event is a duplicate and is ACK'd
+without reprocessing.
+Windowing: The 30-second tumbling window is stored in Redis as a HASH keyed by {tenantId}:{transactionId} with a
+TTL of 35 seconds (5s grace).
+Matching Tolerance Rules
+• Amounts: within ±0.02 of the base currency unit (configurable per tenant).
+• Timestamps: order event and payment event within ±120 seconds.
+• Currency: normalized to order's base currency using cached FX rate (refreshed every 60s).
+Internal Architecture
+ReconciliationKafkaConsumer (VT consumer group)
+nnn IdempotencyFilter
+‹ Redis SETNX check
+nnn WindowBuffer
+nnn MatchingEngine
+nnn ReconciliationResultWriter
+nnn FailurePublisher
+2.3 AI Diagnostic Worker
+‹ Redis HSET / HGET with TTL
+‹ tolerance-aware comparison (currency rounding, ±0.01)
+‹ PostgreSQL upsert via JDBC (VT-safe)
+‹ publishes to recon.failures.{tenantId}
+Responsibilities: Consume from recon.failures.*, classify failure against historical known issues using vector
+embeddings, store a resolution suggestion.
+Tech choices: LangChain4j's EmbeddingModel abstraction allows swapping between OpenAI
+text-embedding-3-small (production) and Ollama (development/air-gapped) with zero code change. pgvector with
+HNSW provides approximate nearest-neighbor search with sub-10ms query latency.
+Similarity Threshold Logic
+Score Range
+>= 0.90
+0.75 – 0.90
+< 0.75
+Status
+AUTO_RESOLVED
+AUTO_CLASSIFIED
+Action
+NEEDS_REVIEW
+Classification Pipeline
+FailureDiagnosticConsumer (VT)
+nnn FailureContextBuilder
+Suggestion applied automatically
+Surfaced to dashboard with high confidence
+Routed to human review queue
+‹ assembles: amount, currency, gateway, error_code, tenant_region
+nnn EmbeddingGenerationService
+nnn VectorSimilaritySearchService
+nnn ResolutionSuggestionBuilder
+nnn SuggestionPersistenceService
+‹ LangChain4j fi OpenAI / Ollama
+‹ pgvector cosine_similarity, top-3
+‹ if similarity > 0.85 fi AUTO_CLASSIFIED, else NEEDS_REVIEW
+‹ writes to resolution_suggestions table
+3. Data Model & Database Design
+Schema Definitions-- Partitioned transactions table
+CREATE TABLE transactions (
+    id                      UUID          NOT NULL DEFAULT gen_random_uuid(),
+    tenant_id               UUID          NOT NULL REFERENCES tenants(id),
+    order_id                TEXT          NOT NULL,
+    gateway_transaction_id  TEXT,
+    amount                  NUMERIC(18,6) NOT NULL,
+    currency                CHAR(3)       NOT NULL,
+    status                  TEXT          NOT NULL DEFAULT 'PENDING',
+    order_ts                TIMESTAMPTZ,
+    payment_ts              TIMESTAMPTZ,
+    reconciled_at           TIMESTAMPTZ,
+    created_at              TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+) PARTITION BY LIST (tenant_id);-- One partition per tenant (created at onboarding time)
+CREATE TABLE transactions_tenant_acme
+    PARTITION OF transactions FOR VALUES IN ('uuid-of-acme');-- Reconciliation failures with pgvector
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE TABLE reconciliation_failures (
+    id                  UUID          NOT NULL DEFAULT gen_random_uuid(),
+    tenant_id           UUID          NOT NULL REFERENCES tenants(id),
+    transaction_id      UUID          REFERENCES transactions(id),
+    failure_reason      TEXT          NOT NULL,
+    failure_code        TEXT,
+    raw_context         JSONB,
+    context_embedding   vector(1536),
+    created_at          TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (id)
+) PARTITION BY LIST (tenant_id);
+CREATE TABLE known_issues (
+    id                    UUID          NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    title                 TEXT          NOT NULL,
+    description           TEXT          NOT NULL,
+    resolution_template   TEXT          NOT NULL,
+    embedding             vector(1536),
+    confidence_threshold  FLOAT         NOT NULL DEFAULT 0.85,
+    created_at            TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+);
+CREATE TABLE resolution_suggestions (
+    id                    UUID          NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    failure_id            UUID          NOT NULL REFERENCES reconciliation_failures(id),
+    known_issue_id        UUID          REFERENCES known_issues(id),
+    similarity_score      FLOAT,
+    classification_status TEXT          NOT NULL,
+    resolution_text       TEXT,
+    auto_applied          BOOLEAN       NOT NULL DEFAULT false,
+    created_at            TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+);
+Indexing Strategy-- Standard queries: tenant + time range lookups
+CREATE INDEX idx_transactions_tenant_created ON transactions (tenant_id, created_at DESC);
+CREATE INDEX idx_transactions_order_id ON transactions (tenant_id, order_id);
+CREATE INDEX idx_transactions_gateway_id ON transactions (tenant_id, gateway_transaction_id);
+CREATE INDEX idx_transactions_status ON transactions (tenant_id, status) WHERE status != 'MATCHED';-- HNSW index for vector similarity (pgvector >= 0.5)-- m=16 ef_construction=64 is recommended starting point for < 10M vectors
+CREATE INDEX idx_known_issues_embedding_hnsw ON known_issues
+    USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
+CREATE INDEX idx_recon_failures_embedding_hnsw ON reconciliation_failures
+    USING hnsw (context_embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 64);
+HNSW vs IVFFlat rationale: HNSW does not require a training step. At 1,000 events/sec/tenant with continuous
+inserts, HNSW's incremental-build model is far more operationally predictable.
+Migration Plan (Flyway)
+db/migration/
+  V1__create_tenants.sql
+  V2__create_transactions_partitioned.sql
+  V3__create_reconciliation_failures.sql
+  V4__create_known_issues_and_hnsw.sql
+  V5__create_resolution_suggestions.sql
+  V6__create_indexes.sql
+  V7__seed_known_issues_baseline.sql   <- SEPA delay, FX rounding, gateway timeout patterns
+4. Authentication & Security
+Auth Flow (JWT / OAuth2 with Spring Security)
+Client fi POST /oauth2/token (client_credentials grant)
+           |
+Spring Authorization Server validates client_id/secret
+           |
+JWT issued: { sub: clientId, tenantId: "acme-corp",
+              roles: ["RECON_VIEWER"|"RECON_ADMIN"], exp: +1h }
+           |
+All API calls: Authorization: Bearer <jwt>
+           |
+Spring Security JwtAuthenticationConverter extracts tenantId claim
+           |
+TenantContextHolder.set(tenantId) fi all repository calls are scoped
+Tenant isolation enforcement: A custom TenantAwareJdbcRepository base class prepends WHERE tenant_id =
+:tenantId to every query. No query can cross tenant boundaries — this is enforced at the repository layer, not just at
+the controller.
+Webhook HMAC Verification
+byte[] secret = tenantSecretService.getHmacSecret(tenantId);
+Mac mac = Mac.getInstance("HmacSHA256");
+mac.init(new SecretKeySpec(secret, "HmacSHA256"));
+String computed = "sha256=" + Hex.encodeHexString(mac.doFinal(rawBody));
+// Constant-time comparison to prevent timing attacks
+if (!MessageDigest.isEqual(computed.getBytes(), signature.getBytes())) {
+    throw new HmacVerificationException(tenantId);
+}
+Security Measures
+• PII masking in logs: A Logback MaskingConverter replaces card numbers, IBANs, and email addresses with
+[MASKED] before any log appender writes.
+• Data encryption: All PostgreSQL connections use TLS 1.3. The pg_encrypt extension encrypts raw_context
+JSONB at rest for opted-in tenants. Redis connections use TLS + AUTH.
+• Idempotency keys: All write endpoints require X-Idempotency-Key: . Stored in Redis with 24-hour TTL. Duplicate
+requests return the cached response.
+Rate Limiting (Redis Sliding-Window)
+Tier
+FREE
+Limit per Endpoint
+100 req/min
+PRO
+1,000 req/min
+ENTERPRISE
+Configurable, default 10,000 req/min
+5. API Design
+REST Schema — Management Dashboard
+GET  /api/v1/{tenantId}/reconciliations
+     ?status=FAILED|MATCHED|PENDING
+     &from=ISO-8601&to=ISO-8601
+     &page=0&size=50
+Response 200:
+{
+  "content": [
+    {
+      "id": "uuid",
+      "order_id": "string",
+      "gateway_transaction_id": "string",
+      "amount": 150.00,
+      "currency": "EUR",
+      "status": "FAILED",
+      "failure_reason": "NO_MATCHING_PAYMENT",
+      "created_at": "ISO-8601",
+      "resolution_suggestion": {
+        "classification_status": "AUTO_CLASSIFIED",
+        "resolution_text": "Known Stripe SEPA delay - retry after 2h",
+        "similarity_score": 0.91
+      }
+    }
+  ],
+  "totalElements": 1423,
+  "page": 0,
+  "size": 50
+}
+GET    /api/v1/{tenantId}/reconciliations/{id}
+POST   /api/v1/{tenantId}/reconciliations/{id}/resolve
+GET    /api/v1/{tenantId}/metrics/summary
+POST   /api/v1/{tenantId}/known-issues           (RECON_ADMIN role)
+GET    /api/v1/{tenantId}/known-issues
+DELETE /api/v1/{tenantId}/known-issues/{id}
+Error Handling — RFC 7807 Problem Details
+{
+}
+  "type": "https://api.reconguard.io/errors/reconciliation-not-found",
+  "title": "Reconciliation record not found",
+  "status": 404,
+  "detail": "No reconciliation with id=abc-123 exists for tenant acme-corp",
+  "instance": "/api/v1/acme-corp/reconciliations/abc-123",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "correlationId": "req-xyz-789"
+API Versioning Strategy
+URI versioning (/api/v1/, /api/v2/) is used over header versioning because it is more visible in logs, curl commands,
+and API gateways. A DeprecationService writes a Deprecation: true response header and a Sunset: <date> header for
+6 months before a version is removed.
+6. Infrastructure & Deployment
+Kubernetes Architecture
+One namespace per tenant for strict resource isolation. HPA scales based on Kafka consumer lag metric.
+# HPA: scale reconciliation pods based on Kafka consumer lag
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+spec:
+  scaleTargetRef:
+    kind: Deployment
+    name: reconciliation-engine
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+  - type: External
+    external:
+      metric:
+        name: kafka_consumer_group_lag
+      target:
+        type: AverageValue
+        averageValue: "1000"
+Resource Allocation per Pod
+Component
+Ingestion Service
+Reconciliation Engine
+AI Diagnostic Worker
+CPU Request
+500m
+1
+CPU Limit
+2
+Memory Request
+512Mi
+4
+500m
+Jenkins Declarative Pipeline
+pipeline {
+2
+  agent { docker { image 'eclipse-temurin:21-jdk' } }
+  stages {
+1Gi
+1Gi
+    stage('Build')            { steps { sh './gradlew clean build -x test' } }
+    stage('Unit Tests')       { steps { sh './gradlew test' } }
+    stage('Security Scan') {
+      parallel {
+        stage('OWASP')  { steps { sh './gradlew dependencyCheckAnalyze' } }
+Memory Limit
+1Gi
+2Gi
+2Gi
+        stage('Trivy')  { steps { sh 'trivy image --exit-code 1 --severity HIGH,CRITICAL ...' } }
+      }
+    }
+    stage('Integration Tests') { steps { sh './gradlew integrationTest' } }
+    stage('Deploy Staging')    { when { branch 'main' }
+                                 steps { sh 'helm upgrade --install reconguard ./helm ...' } }
+    stage('Performance Test')  { steps { sh 'k6 run tests/performance/reconciliation-load.js' } }
+    stage('Deploy Production') { when { branch 'main' }
+                                 input { message 'Approve production deployment?' }
+                                 steps { sh 'helm upgrade --install reconguard ./helm --namespace recon-prod ...' } }
+  }
+}
+Docker Compose — Local Development
+version: '3.9'
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment: { POSTGRES_DB: reconguard, POSTGRES_USER: recon, POSTGRES_PASSWORD: secret }
+    ports: ["5432:5432"]
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass secret
+    ports: ["6379:6379"]
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 12
+    ports: ["9092:9092"]
+  ollama:
+    image: ollama/ollama:latest
+    ports: ["11434:11434"]
+    # After startup: docker exec -it ollama ollama pull nomic-embed-text
+Observability — Key Micrometer Metrics
+// Reconciliation latency histogram
+Timer.builder("recon.match.latency")
+    .tag("tenant", tenantId)
+    .tag("status", result.getStatus())
+    .register(meterRegistry)
+    .record(duration, TimeUnit.MILLISECONDS);
+// AI classification rate gauge
+Gauge.builder("recon.ai.classification_rate", classificationStore,
+    store -> store.getAutoClassifiedRate())
+    .tag("tenant", tenantId)
+    .register(meterRegistry);
+Grafana Dashboard Panels
+• Reconciliation throughput (events/sec by tenant)
+• Consumer group lag per topic
+• AI classification rate (target: >= 0.80)
+• P99 reconciliation latency (target: < 1000ms)
+• Redis hit rate for idempotency cache
+• PostgreSQL query latency by table
+7. Development Roadmap
+Phase 1 — Data Ingestion & Kafka Setup (Weeks 1–3)
+• Scaffold Spring Boot project with multi-module Gradle structure.
+• Implement TransactionEvent canonical model and Kafka topic configuration.
+• Build WebhookIngestorController with HMAC verification filter.
+• Build Debezium/JDBC source connector config for Order DB CDC.
+• Write Testcontainers integration tests for Kafka producer/consumer round-trips.
+• Deploy local Docker Compose infrastructure.
+Phase 2 — Reconciliation Logic & Redis Idempotency (Weeks 4–7)
+• Implement ReconciliationKafkaConsumer with virtual thread executor.
+• Build WindowBuffer using Redis HASH + TTL strategy.
+• Implement MatchingEngine with FX normalization and tolerance rules.
+• Implement IdempotencyFilter with Redis SETNX.
+• Build PostgreSQL schema with Flyway migrations and partition creation.
+• Performance test: target 1,000 events/sec/tenant on a 4-core dev machine.
+Phase 3 — AI Utility Integration & Observability (Weeks 8–12)
+• Integrate LangChain4j with OpenAI embedding model; abstract behind EmbeddingService interface.
+• Build VectorSimilaritySearchService with pgvector cosine search.
+• Seed known_issues table with 50 baseline patterns (Stripe delays, FX rounding, SEPA holds).
+• Implement ResolutionSuggestionBuilder with threshold-based classification logic.
+• Instrument all components with Micrometer timers and gauges.
+• Build Grafana dashboards for the 6 key panels.
+• End-to-end Testcontainers test: failure fi AI classification fi suggestion stored.
+Testing Strategy
+Unit tests (JUnit 5 + Mockito): Business logic in isolation — MatchingEngine, ResolutionSuggestionBuilder,
+HmacVerificationFilter. Target: 80%+ line coverage on core domain classes.
+Integration tests (Testcontainers): Full stack with real Kafka, PostgreSQL, Redis containers — no mocking of
+infrastructure dependencies.
+@SpringBootTest
+@Testcontainers
+class ReconciliationIntegrationTest {
+    @Container
+    static KafkaContainer kafka =
+        new KafkaContainer(DockerImageName.parse("confluentinc/cp-kafka:7.6.0"));
+    @Container
+    static PostgreSQLContainer<?> postgres =
+        new PostgreSQLContainer<>(DockerImageName.parse("pgvector/pgvector:pg16"))
+            .withDatabaseName("reconguard_test");
+    @Container
+    static GenericContainer<?> redis =
+        new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
+    @Test
+    void givenMatchingOrderAndPayment_whenReconciled_thenStatusIsMatched() { ... }
+    @Test
+    void givenDuplicateEvent_whenProcessedTwice_thenIdempotencyKeyPreventsDoubleWrite() { ... }
+    @Test
+    void givenNoMatchingPayment_whenWindowExpires_thenFailureIsPublished() { ... }
+}
+Performance tests (k6): 1,000 events/sec for 5 minutes per tenant. Assert P99 reconciliation latency < 1s. Assert
+zero duplicate MATCHED records after the run.
+8. Risks & Mitigations
+Risk
+Kafka consumer lag spike
+Impact
+Mitigation
+Reconciliation delays beyond window TTL
+HPA scales pods when lag > 1,000. DLQ captures events after 3 retries. 24 partitions for headroom.
+Poison pill messages
+Partition halted by repeated consumer exceptions
+DefaultErrorHandler with exponential back-off (1s/2s/4s/8s, max 3 retries). Events beyond limit go to DLQ. Alert fires when DLQ depth > 10.
+pgvector latency at scale
+AI classification latency degrades at > 1M known_issues rows
+HNSW m=16, can rebuild offline. LIMIT 3 on similarity search. Soft-delete only to maintain embedding continuity.
+PostgreSQL partition proliferation High planning overhead at 1,000+ tenants
+LIST (tenant_id) partitioning — queries always hit exactly one partition. Sub-partitioning by month when partition exceeds 100M rows.
+Database downtime / failover
+Write failures during reconciliation Patroni streaming replica / AWS RDS Multi-AZ. @Retryable(maxAttempts=3). Kafka offsets not committed until DB write succeeds.
+9. Next Steps
+File Structure
+reconguard/
+nnn build.gradle (root multi-module)
+nnn settings.gradle
+nnn docker-compose.yml
+nnn helm/
+n   nnn Chart.yaml
+n   nnn templates/
+nnn modules/
+n   nnn ingestion-service/
+n   n   nnn src/main/java/io/reconguard/ingestion/
+n   n       nnn controller/WebhookController.java
+n   n       nnn filter/HmacVerificationFilter.java
+n   n       nnn service/PayloadNormalizationService.java
+n   n       nnn kafka/KafkaTransactionProducer.java
+n   nnn reconciliation-engine/
+n   n   nnn src/main/java/io/reconguard/reconciliation/
+n   n       nnn consumer/ReconciliationKafkaConsumer.java
+n   n       nnn window/WindowBuffer.java
+n   n       nnn engine/MatchingEngine.java
+n   n       nnn idempotency/IdempotencyFilter.java
+n   n       nnn repository/ReconciliationRepository.java
+n   nnn ai-diagnostic-worker/
+n   n   nnn src/main/java/io/reconguard/ai/
+n   n       nnn consumer/FailureDiagnosticConsumer.java
+n   n       nnn service/EmbeddingService.java
+n   n       nnn service/VectorSimilaritySearchService.java
+n   n       nnn service/ResolutionSuggestionBuilder.java
+n   nnn management-api/
+n   n   nnn src/main/java/io/reconguard/api/
+n   n       nnn controller/ReconciliationController.java
+n   n       nnn controller/KnownIssueController.java
+n   n       nnn security/TenantJwtAuthConverter.java
+n   nnn common/
+n
+nnn src/main/java/io/reconguard/common/
+n
+n
+n
+n
+nnn model/TransactionEvent.java
+nnn model/TenantContext.java
+nnn security/TenantContextHolder.java
+nnn observability/MdcFilter.java
+nnn db/migration/
+n   nnn V1__create_tenants.sql
+n   nnn ...
+nnn Jenkinsfile
+First 3 Files to Implement
+1. TransactionEvent.java (common module)
+public record TransactionEvent(
+    String messageId,
+    String tenantId,
+    String orderId,
+    String gatewayTransactionId,
+    BigDecimal amount,
+    String currency,
+    TransactionEventType type,    // ORDER | PAYMENT
+    Instant eventTimestamp,
+    Map<String, String> metadata
+) {}
+2. KafkaConfig.java (ingestion-service)
+@Configuration
+public class KafkaConfig {
+    @Bean
+    public ProducerFactory<String, TransactionEvent> producerFactory(KafkaProperties props) {
+        Map<String, Object> config = props.buildProducerProperties(null);
+        config.put(ProducerConfig.ENABLE_IDEMPOTENCE_CONFIG, true);
+        config.put(ProducerConfig.ACKS_CONFIG, "all");
+        config.put(ProducerConfig.MAX_IN_FLIGHT_REQUESTS_PER_CONNECTION, 5);
+        return new DefaultKafkaProducerFactory<>(config);
+    }
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, TransactionEvent>
+    kafkaListenerContainerFactory(ConsumerFactory<String, TransactionEvent> cf) {
+        var factory = new ConcurrentKafkaListenerContainerFactory<String, TransactionEvent>();
+        factory.setConsumerFactory(cf);
+        factory.getContainerProperties().setListenerTaskExecutor(
+            Executors.newVirtualThreadPerTaskExecutor());  // Java 21 virtual threads
+        return factory;
+    }
+}
+3. V1__create_tenants.sql
+CREATE TABLE tenants (
+    id                  UUID        NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    slug                TEXT        NOT NULL UNIQUE,
+    hmac_secret_ref     TEXT        NOT NULL,  -- K8s secret ref, never the secret itself
+    config              JSONB       NOT NULL DEFAULT '{}',
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_tenants_slug ON tenants (slug);
+Environment Setup Commands
+# 1. Clone and enter project
+git clone https://github.com/your-org/reconguard && cd reconguard
+# 2. Start all local infrastructure
+docker compose up -d
+# 3. Create Kafka topics
+docker exec -it reconguard-kafka-1 kafka-topics --bootstrap-server localhost:9092 \
+  --create --topic tx.orders.acme-corp --partitions 12 --replication-factor 1
+docker exec -it reconguard-kafka-1 kafka-topics --bootstrap-server localhost:9092 \
+  --create --topic tx.payments.acme-corp --partitions 12 --replication-factor 1
+docker exec -it reconguard-kafka-1 kafka-topics --bootstrap-server localhost:9092 \
+  --create --topic recon.failures.acme-corp --partitions 6 --replication-factor 1
+# 4. Pull Ollama embedding model (local AI, no OpenAI key needed)
+docker exec -it reconguard-ollama-1 ollama pull nomic-embed-text
+# 5. Run Flyway migrations
+./gradlew :modules:common:flywayMigrate
+# 6. Run all tests (Testcontainers spins up isolated infra automatically)
+./gradlew test integrationTest
+# 7. Start all services
+./gradlew :modules:ingestion-service:bootRun &
+./gradlew :modules:reconciliation-engine:bootRun &
+./gradlew :modules:ai-diagnostic-worker:bootRun &
+./gradlew :modules:management-api:bootRun
+This architecture is ready for implementation. Confirm before proceeding to code.

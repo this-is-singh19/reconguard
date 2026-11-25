@@ -35,3 +35,8 @@ out/
 
 ### VS Code ###
 .idea/
+
+### Added by audit (0.11)
+*.log
+tmp/
+.mcp.json
