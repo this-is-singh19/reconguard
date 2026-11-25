@@ -3,7 +3,7 @@
 
 -- 1. Add missing embedding column to reconciliation_failures
 ALTER TABLE reconciliation_failures
-ADD COLUMN IF NOT EXISTS context_embedding vector(1536);
+ADD COLUMN IF NOT EXISTS context_embedding vector(768);
 
 -- 2. Recreate known_issues index with explicit tuning parameters
 DROP INDEX IF EXISTS idx_known_issues_embedding;

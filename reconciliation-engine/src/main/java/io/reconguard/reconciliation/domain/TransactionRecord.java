@@ -2,6 +2,7 @@ package io.reconguard.reconciliation.domain;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.CreationTimestamp;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -43,6 +44,7 @@ public class TransactionRecord {
     @Column(name = "matched_with_transaction_id")
     private String gatewayTransactionId;
 
+    @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 

@@ -1,5 +1,6 @@
 package io.reconguard.reconciliation.service;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.reconguard.common.model.MonetaryAmount;
 import io.reconguard.common.model.TransactionEvent;
 import io.reconguard.common.model.TransactionEventType;
@@ -23,6 +24,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -48,11 +50,12 @@ class MatchingEngineServiceTest {
 
     @BeforeEach
     void setUp() {
-        when(toleranceConfig.maxAmountDifference()).thenReturn(new BigDecimal("0.02"));
-        when(toleranceConfig.maxTimeWindow()).thenReturn(Duration.ofSeconds(120));
+        // lenient: not every test reads both tolerances
+        lenient().when(toleranceConfig.maxAmountDifference()).thenReturn(new BigDecimal("0.02"));
+        lenient().when(toleranceConfig.maxTimeWindow()).thenReturn(Duration.ofSeconds(120));
 
         matchingEngineService = new MatchingEngineService(
-                transactionRepository, windowBufferService, toleranceConfig);
+                transactionRepository, windowBufferService, toleranceConfig, new SimpleMeterRegistry());
     }
 
     @Test

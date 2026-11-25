@@ -1,22 +1,29 @@
 package io.reconguard.reconciliation.window;
 
+import io.reconguard.common.model.TransactionEvent;
+import io.reconguard.reconciliation.consumer.FailurePublisher;
 import io.reconguard.reconciliation.domain.TransactionRecord;
 import io.reconguard.reconciliation.repository.TransactionRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.kafka.core.KafkaTemplate;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class UnresolvedTransactionSweeperTest {
@@ -25,20 +32,21 @@ class UnresolvedTransactionSweeperTest {
     private TransactionRepository transactionRepository;
 
     @Mock
-    private KafkaTemplate<String, Object> kafkaTemplate;
+    private FailurePublisher failurePublisher;
 
     @InjectMocks
-    private UnresolvedTransactionSweeper sweeper;
+    private WindowUnresolvedTransactionSweeper sweeper;
 
     @Test
-    @DisplayName("Should transition stale UNRESOLVED records to FAILED and emit failure events to Kafka")
+    @DisplayName("Should transition stale UNRESOLVED records to FAILED and publish failure events")
     void shouldSweepStaleUnresolvedAndEmitEvents() {
         TransactionRecord staleRecord = new TransactionRecord();
-        staleRecord.setTransactionId("tx-stale-1");
+        staleRecord.setId("tx-stale-1");
         staleRecord.setTenantId("tenant-acme");
         staleRecord.setOrderId("order-99");
         staleRecord.setAmount(new BigDecimal("200.00"));
         staleRecord.setCurrency("USD");
+        staleRecord.setType("ORDER");
         staleRecord.setStatus("UNRESOLVED");
         staleRecord.setEventTimestamp(Instant.now().minusSeconds(600)); // 10 minutes old
 
@@ -48,11 +56,16 @@ class UnresolvedTransactionSweeperTest {
         sweeper.sweepStaleUnresolvedTransactions();
 
         verify(transactionRepository, times(1)).markAsFailed(List.of("tx-stale-1"));
-        verify(kafkaTemplate, times(1)).send(
-                eq("reconguard.transactions.failures"),
-                eq("tenant-acme"),
-                eq(staleRecord)
-        );
+
+        ArgumentCaptor<TransactionEvent> eventCaptor = ArgumentCaptor.forClass(TransactionEvent.class);
+        verify(failurePublisher, times(1)).publishFailure(
+                eq("tenant-acme"), eventCaptor.capture(), eq("Unmatched window expiration"));
+
+        TransactionEvent published = eventCaptor.getValue();
+        assertThat(published.transactionId()).isEqualTo("tx-stale-1");
+        assertThat(published.orderId()).isEqualTo("order-99");
+        assertThat(published.monetaryAmount().value()).isEqualByComparingTo("200.00");
+        assertThat(published.monetaryAmount().currency()).isEqualTo("USD");
     }
 
     @Test
@@ -64,6 +77,6 @@ class UnresolvedTransactionSweeperTest {
         sweeper.sweepStaleUnresolvedTransactions();
 
         verify(transactionRepository, never()).markAsFailed(any());
-        verify(kafkaTemplate, never()).send(any(), any(), any());
+        verify(failurePublisher, never()).publishFailure(anyString(), any(), anyString());
     }
 }

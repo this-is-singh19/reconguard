@@ -9,6 +9,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -51,6 +52,17 @@ class DiagnosticFlowIntegrationTest {
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
+
+        // The schema (known_issues, resolution_suggestions, transactions) is owned by the engine's
+        // Flyway migrations. Run those against the test Postgres so ddl-auto=validate passes.
+        // Gradle's test working dir is this module, hence the relative path.
+        // Test producer must JSON-serialize TransactionFailureEvent (engine's producer does the same)
+        registry.add("spring.kafka.producer.value-serializer",
+                () -> "org.springframework.kafka.support.serializer.JsonSerializer");
+
+        registry.add("spring.flyway.enabled", () -> "true");
+        registry.add("spring.flyway.locations",
+                () -> "filesystem:../reconciliation-engine/src/main/resources/db/migration");
     }
 
     @Autowired
@@ -62,12 +74,27 @@ class DiagnosticFlowIntegrationTest {
     @Autowired
     private MeterRegistry meterRegistry;
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     @Test
     @DisplayName("Should ingest failure event, run vector diagnostic, and persist resolution suggestion")
     void shouldProcessFailureEventAndPersistResolutionSuggestion() {
 
         String tenantId = "tenant-space-99";
         String transactionId = "tx-integration-test-001";
+
+        // In production the engine writes the transaction row (status FAILED) before publishing the
+        // failure, and resolution_suggestions has an FK to it. Seed the same state here.
+        jdbcTemplate.update("INSERT INTO tenants (tenant_id, name) VALUES (?, ?) ON CONFLICT (tenant_id) DO NOTHING",
+                tenantId, "Integration Test Tenant");
+        jdbcTemplate.update("""
+                INSERT INTO transactions (transaction_id, tenant_id, order_id, amount, currency, type, status, event_timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (transaction_id) DO NOTHING
+                """,
+                transactionId, tenantId, "ord-int-test-900", new BigDecimal("149.99"), "EUR",
+                "PAYMENT", "FAILED", java.sql.Timestamp.from(Instant.now()));
 
         TransactionFailureEvent failureEvent = new TransactionFailureEvent(
                 transactionId,

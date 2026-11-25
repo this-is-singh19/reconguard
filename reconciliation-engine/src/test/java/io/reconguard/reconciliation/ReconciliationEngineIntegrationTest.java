@@ -6,12 +6,15 @@ import io.reconguard.common.model.TransactionEventType;
 import io.reconguard.reconciliation.domain.TransactionRecord;
 import io.reconguard.reconciliation.repository.TransactionRepository;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.test.annotation.DirtiesContext;
@@ -22,6 +25,10 @@ import java.time.Duration;
 import java.time.Instant;
 
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest
@@ -42,8 +49,25 @@ class ReconciliationEngineIntegrationTest {
     @Autowired
     private TransactionRepository transactionRepository;
 
+    // WindowBufferService uses RedisTemplate; IdempotencyGuard uses StringRedisTemplate. Mock both.
     @MockBean
     private RedisTemplate<String, Object> redisTemplate;
+
+    @MockBean
+    private StringRedisTemplate stringRedisTemplate;
+
+    @BeforeEach
+    @SuppressWarnings("unchecked")
+    void stubRedis() {
+        // Window buffer: nothing buffered, so matching falls through to Postgres
+        ValueOperations<String, Object> bufferOps = mock(ValueOperations.class);
+        when(redisTemplate.opsForValue()).thenReturn(bufferOps);
+
+        // Idempotency: every transaction id is a fresh claim
+        ValueOperations<String, String> claimOps = mock(ValueOperations.class);
+        when(stringRedisTemplate.opsForValue()).thenReturn(claimOps);
+        when(claimOps.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(true);
+    }
 
     private static final String TOPIC = "reconguard.transactions.raw";
     private static final String TENANT_ID = "tenant-space-99";
@@ -100,8 +124,8 @@ class ReconciliationEngineIntegrationTest {
             assertEquals("MATCHED", orderRecord.getStatus());
             assertEquals("MATCHED", paymentRecord.getStatus());
 
-            assertEquals("TXN-PAYMENT-1", orderRecord.getMatchedWithTransactionId());
-            assertEquals("TXN-ORDER-1", paymentRecord.getMatchedWithTransactionId());
+            assertEquals("TXN-PAYMENT-1", orderRecord.getGatewayTransactionId());
+            assertEquals("TXN-ORDER-1", paymentRecord.getGatewayTransactionId());
         });
     }
 }

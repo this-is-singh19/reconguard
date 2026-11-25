@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS known_issues (
                               category VARCHAR(64) NOT NULL,
                               description TEXT NOT NULL,
                               recommended_action TEXT NOT NULL,
-                              embedding vector(1536), -- Standard size for OpenAI text-embedding-3-small / nomic-embed-text
+                              embedding vector(768), -- Ollama nomic-embed-text = 768 dims (OpenAI would be 1536)
                               created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                               updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
