@@ -1,4 +1,4 @@
- package io.reconguard.ai;
+package io.reconguard.ai;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.reconguard.ai.domain.ResolutionSuggestion;
@@ -8,7 +8,12 @@ import org.awaitility.Awaitility;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import io.reconguard.ai.service.EmbeddingService;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.ActiveProfiles;
@@ -31,7 +36,39 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest
 @Testcontainers
 @ActiveProfiles("test")
+@Import(DiagnosticFlowIntegrationTest.FakeEmbeddingConfig.class)
 class DiagnosticFlowIntegrationTest {
+
+    /** Deterministic 768-dim embeddings so the test does not need a running Ollama. */
+    @TestConfiguration
+    static class FakeEmbeddingConfig {
+        @Bean
+        @Primary
+        EmbeddingService fakeEmbeddingService() {
+            return new EmbeddingService() {
+                @Override
+                public float[] embed(String text) {
+                    java.util.Random r = new java.util.Random(text.hashCode());
+                    float[] v = new float[768];
+                    double norm = 0;
+                    for (int i = 0; i < v.length; i++) {
+                        v[i] = (float) r.nextGaussian();
+                        norm += v[i] * v[i];
+                    }
+                    float n = (float) Math.sqrt(norm);
+                    for (int i = 0; i < v.length; i++) {
+                        v[i] /= n;
+                    }
+                    return v;
+                }
+
+                @Override
+                public List<float[]> embedAll(List<String> texts) {
+                    return texts.stream().map(this::embed).toList();
+                }
+            };
+        }
+    }
 
     @Container
     static PostgreSQLContainer<?> postgres =

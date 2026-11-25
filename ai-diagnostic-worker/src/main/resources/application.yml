@@ -50,8 +50,7 @@ management:
       base-path: /actuator
   endpoint:
     prometheus:
-      # Replaces the deprecated `enabled` key. Note: /actuator/prometheus is still not served until
-      # micrometer-registry-prometheus is added to build.gradle (see C1 / 0F.27).
+      # Replaces the deprecated `enabled` key. /actuator/prometheus is served via micrometer-registry-prometheus.
       access: unrestricted
     health:
       show-details: always

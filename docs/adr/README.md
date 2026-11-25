@@ -17,3 +17,4 @@ Format: Status / Context / Decision / Consequences. Status values:
 | 0008 | `messageId` on the canonical event | Accepted – implementation planned (G1.4) |
 | 0009 | Producer `enable.idempotence=true` | Accepted – implementation planned (A4.8) |
 | 0010 | Topic partition counts | Accepted – implementation planned (A3.15) |
+- [0011](0011-ingestion-dedup.md) Ingestion dedup on idempotency key only

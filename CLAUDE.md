@@ -26,7 +26,7 @@ docker exec -it reconguard-ollama ollama pull nomic-embed-text   # embedding mod
 
 ./gradlew :ingestion-service:bootRun                # port 8081 (needs reconguard.webhook.secret set)
 ./gradlew :reconciliation-engine:bootRun            # port 8080, runs Flyway migrations
-./gradlew :ai-diagnostic-worker:bootRun             # port 8082, actuator at /actuator (no /actuator/prometheus yet, see below)
+./gradlew :ai-diagnostic-worker:bootRun             # port 8082, actuator at /actuator, /actuator/prometheus served
 ```
 
 There is no lint or formatter task. The `integrationTest`, `flywayMigrate` and `:modules:*` tasks mentioned in `architecture` and other planning docs do not exist.
@@ -69,7 +69,7 @@ Test setups by module:
 
   Embedding dimension is 768 (`reconguard.ai.embedding.dimension`). `EmbeddingDimensionCheck` fails startup if it does not match `known_issues.embedding`. `KnownIssueEmbeddingBootstrap` computes `known_issues` embeddings at startup.
 
-  JPA is set to `ddl-auto: validate`, so the schema must already exist from the reconciliation-engine migrations. Micrometer metrics live in `AiDiagnosticMetrics`. The Grafana dashboard JSON is in `grafana/dashboards/`. `/actuator/prometheus` is not served: `micrometer-registry-prometheus` is not a dependency, so the endpoint is absent even though it is listed in `management.endpoints.web.exposure.include`.
+  JPA is set to `ddl-auto: validate`, so the schema must already exist from the reconciliation-engine migrations. Micrometer metrics live in `AiDiagnosticMetrics`. The Grafana dashboard JSON is in `grafana/dashboards/`. `/actuator/prometheus` is served (`micrometer-registry-prometheus` is a dependency in this module only; the engine and ingestion do not expose it).
 
 ### Failure contract
 - The engine's `FailurePublisher` sends a `TransactionFailureEvent` to `reconguard.transactions.failures`, keyed `{tenantId}:{orderId}`. The AI worker's `TransactionFailureConsumer` reads it with `FailureKafkaConsumerConfig`. This is the only failure contract.

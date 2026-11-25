@@ -29,7 +29,7 @@ import java.util.Map;
 public class FailureKafkaConsumerConfig {
 
     public static final String FAILURE_LISTENER_FACTORY = "failureKafkaListenerContainerFactory";
-    public static final String FAILURE_DLT_SUFFIX = ".DLT";
+    public static final String FAILURE_DLT_SUFFIX = ".DLQ";
 
     @Value("${spring.kafka.bootstrap-servers:localhost:9092}")
     private String bootstrapServers;
@@ -71,7 +71,7 @@ public class FailureKafkaConsumerConfig {
         factory.setConsumerFactory(failureConsumerFactory);
         factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.RECORD);
 
-        // Poison/failed records go to <topic>.DLT on the same partition
+        // Poison/failed records go to <topic>.DLQ on the same partition
         DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(
                 kafkaTemplate,
                 (record, ex) -> new TopicPartition(record.topic() + FAILURE_DLT_SUFFIX, record.partition()));

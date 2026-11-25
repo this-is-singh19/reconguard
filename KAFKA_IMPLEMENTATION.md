@@ -49,7 +49,7 @@ Current topics:
 - `reconguard.transactions.raw`: transaction events from ingestion
 - `reconguard.transactions.raw.DLQ`: the single dead-letter topic for the raw topic. It is shared by all tenants; the tenant is carried in the record, not in the topic name
 - `reconguard.transactions.failures`: `TransactionFailureEvent`s from the engine to the AI worker
-- `reconguard.transactions.failures.DLT`: the AI worker's dead-letter topic for failure records
+- `reconguard.transactions.failures.DLQ`: the AI worker's dead-letter topic for failure records
 
 Planned: a per-tenant DLQ (`recon.dlq.{tenant}`). It is not implemented.
 
