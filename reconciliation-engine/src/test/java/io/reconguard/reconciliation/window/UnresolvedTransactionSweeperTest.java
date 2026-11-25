@@ -34,6 +34,9 @@ class UnresolvedTransactionSweeperTest {
     @Mock
     private FailurePublisher failurePublisher;
 
+    @Mock
+    private io.reconguard.reconciliation.repository.ReconciliationFailureRepository failureRepository;
+
     @InjectMocks
     private WindowUnresolvedTransactionSweeper sweeper;
 
@@ -61,6 +64,16 @@ class UnresolvedTransactionSweeperTest {
         verify(failurePublisher, times(1)).publishFailure(
                 eq("tenant-acme"), eventCaptor.capture(), eq("Unmatched window expiration"));
 
+        ArgumentCaptor<io.reconguard.reconciliation.domain.ReconciliationFailure> failureCaptor =
+                ArgumentCaptor.forClass(io.reconguard.reconciliation.domain.ReconciliationFailure.class);
+        verify(failureRepository).save(failureCaptor.capture());
+        io.reconguard.reconciliation.domain.ReconciliationFailure failure = failureCaptor.getValue();
+        assertThat(failure.getTenantId()).isEqualTo("tenant-acme");
+        assertThat(failure.getTransactionId()).isEqualTo("tx-stale-1");
+        assertThat(failure.getOrderId()).isEqualTo("order-99");
+        assertThat(failure.isResolved()).isFalse();
+        assertThat(failure.getRawPayloadContext()).contains("tx-stale-1");
+
         TransactionEvent published = eventCaptor.getValue();
         assertThat(published.transactionId()).isEqualTo("tx-stale-1");
         assertThat(published.orderId()).isEqualTo("order-99");
@@ -78,5 +91,6 @@ class UnresolvedTransactionSweeperTest {
 
         verify(transactionRepository, never()).markAsFailed(any());
         verify(failurePublisher, never()).publishFailure(anyString(), any(), anyString());
+        verify(failureRepository, never()).save(any());
     }
 }

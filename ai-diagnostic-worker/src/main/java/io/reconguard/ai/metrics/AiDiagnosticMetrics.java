@@ -42,7 +42,7 @@ public class AiDiagnosticMetrics {
         Counter.builder(METRIC_SUGGESTION_OUTCOME)
                 .description("Distribution of AI resolution suggestion outcomes")
                 .tag("tenant", tenantId)
-                .tag("outcome_status", outcomeStatus) // AUTO_RESOLVED | NEEDS_REVIEW | AUTO_CLASSIFIED
+                .tag("outcome_status", outcomeStatus) // AUTO_RESOLVED | AUTO_CLASSIFIED | NEEDS_REVIEW
                 // category must be the KnownIssue category (low cardinality), never matchedIssueId.
                 .tag("category", category != null ? category : "NONE")
                 .register(registry)

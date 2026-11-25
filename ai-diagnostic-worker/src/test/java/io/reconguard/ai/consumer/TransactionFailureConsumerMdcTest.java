@@ -36,7 +36,8 @@ class TransactionFailureConsumerMdcTest {
 
     private final TransactionFailureConsumer consumer = new TransactionFailureConsumer(
             new FailureContextBuilder(), embeddingService, searchService,
-            suggestionBuilder, repository, metrics);
+            suggestionBuilder, repository, metrics,
+            mock(io.reconguard.ai.repository.FailureRecordRepository.class));
 
     @AfterEach
     void clearMdc() {

@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.List;
@@ -24,7 +25,8 @@ public class ResolutionSuggestionBuilder {
      * a ResolutionSuggestion entity ready for persistence.
      */
     public ResolutionSuggestion buildSuggestion(TransactionFailureEvent event, List<VectorMatchProjection> matches) {
-        String suggestionId = "sug-" + UUID.randomUUID();
+        // Deterministic id: redelivery of the same failure upserts the same row (A2.9).
+        String suggestionId = suggestionId(event.tenantId(), event.transactionId());
         Instant now = Instant.now();
 
         if (matches == null || matches.isEmpty()) {
@@ -66,6 +68,7 @@ public class ResolutionSuggestionBuilder {
         suggestion.setMatchedIssueId(topMatch.getIssueId());
         suggestion.setConfidenceScore(formattedScore);
         suggestion.setStatus(status);
+        suggestion.setAutoApplied("AUTO_RESOLVED".equals(status));
         suggestion.setReasoning(reasoning);
         suggestion.setSuggestedAction(suggestedAction);
         suggestion.setCreatedAt(now);
@@ -74,6 +77,10 @@ public class ResolutionSuggestionBuilder {
                 event.transactionId(), status, formattedScore);
 
         return suggestion;
+    }
+
+    public static String suggestionId(String tenantId, String transactionId) {
+        return "sug-" + UUID.nameUUIDFromBytes((tenantId + ":" + transactionId).getBytes(StandardCharsets.UTF_8));
     }
 
     private ResolutionSuggestion buildFallbackSuggestion(String id, TransactionFailureEvent event, String reason, Instant now) {

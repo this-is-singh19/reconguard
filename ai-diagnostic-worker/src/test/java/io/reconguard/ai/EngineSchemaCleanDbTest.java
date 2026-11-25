@@ -52,7 +52,7 @@ class EngineSchemaCleanDbTest {
     void migrationsApplyToEmptyDatabase() {
         Flyway flyway = Flyway.configure().dataSource(dataSource).locations(MIGRATIONS).load();
         flyway.validate();
-        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("10");
+        assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("11");
     }
 
     @Test

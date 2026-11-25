@@ -18,9 +18,10 @@ dependencies {
 
     // Spring AI: 1.1.8 (latest 1.1.x, Boot 3.5.x line) on Spring Boot 3.5.13 (root build).
     // Spring AI 2.x targets Boot 4 - do not bump past 1.1.x without a Boot upgrade.
-    // OpenAI starter / OpenAiEmbeddingService decision is deferred (0F.16 / A2.10).
+    // OpenAI starter is inert unless spring.ai.model.embedding=openai (profile openai, A2.10).
     implementation platform("org.springframework.ai:spring-ai-bom:1.1.8")
     implementation "org.springframework.ai:spring-ai-starter-model-ollama"
+    implementation "org.springframework.ai:spring-ai-starter-model-openai"
 
     // Database & Flyway
     implementation 'org.flywaydb:flyway-database-postgresql'

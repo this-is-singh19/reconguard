@@ -9,6 +9,11 @@ public interface EmbeddingService {
      */
     float[] embed(String text);
 
+    /** Embedding model name, used as the metric tag. */
+    default String modelName() {
+        return "unknown";
+    }
+
     /**
      * Batch embedding generation for multiple text prompts.
      */

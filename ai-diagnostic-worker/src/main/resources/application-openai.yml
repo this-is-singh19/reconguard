@@ -1,0 +1,17 @@
+# Activate with --spring.profiles.active=openai and OPENAI_API_KEY set.
+# dimensions=768 keeps vectors compatible with known_issues.embedding vector(768).
+reconguard:
+  ai:
+    provider: openai
+    embedding:
+      dimension: 768
+spring:
+  ai:
+    model:
+      embedding: openai
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      embedding:
+        options:
+          model: text-embedding-3-small
+          dimensions: 768

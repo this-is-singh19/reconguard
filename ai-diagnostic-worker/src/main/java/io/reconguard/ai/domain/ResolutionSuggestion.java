@@ -40,6 +40,13 @@ public class ResolutionSuggestion {
     @Column(name = "suggested_action", nullable = false, columnDefinition = "TEXT")
     private String suggestedAction;
 
+    /** True when the worker acted on the suggestion itself (AUTO_RESOLVED only). */
+    @Column(name = "auto_applied", nullable = false)
+    private boolean autoApplied;
+
+    @Column(name = "failure_id")
+    private java.util.UUID failureId;
+
     @Column(name = "created_at")
     private Instant createdAt;
 }

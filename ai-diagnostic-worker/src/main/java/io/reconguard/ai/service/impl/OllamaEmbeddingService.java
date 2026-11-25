@@ -3,6 +3,7 @@ package io.reconguard.ai.service.impl;
 import io.reconguard.ai.service.EmbeddingService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
@@ -15,8 +16,17 @@ public class OllamaEmbeddingService implements EmbeddingService {
 
     private final EmbeddingModel embeddingModel;
 
-    public OllamaEmbeddingService(EmbeddingModel embeddingModel) {
+    private final String modelName;
+
+    public OllamaEmbeddingService(EmbeddingModel embeddingModel,
+                                  @Value("${spring.ai.ollama.embedding.options.model:nomic-embed-text}") String modelName) {
         this.embeddingModel = embeddingModel;
+        this.modelName = modelName;
+    }
+
+    @Override
+    public String modelName() {
+        return modelName;
     }
 
     @Override

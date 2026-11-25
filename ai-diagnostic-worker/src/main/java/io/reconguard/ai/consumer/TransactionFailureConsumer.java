@@ -4,6 +4,7 @@ import io.reconguard.ai.builder.FailureContextBuilder;
 import io.reconguard.ai.domain.ResolutionSuggestion;
 import io.reconguard.ai.dto.VectorMatchProjection;
 import io.reconguard.ai.metrics.AiDiagnosticMetrics;
+import io.reconguard.ai.repository.FailureRecordRepository;
 import io.reconguard.ai.repository.ResolutionSuggestionRepository;
 import io.reconguard.ai.service.EmbeddingService;
 import io.reconguard.ai.service.ResolutionSuggestionBuilder;
@@ -16,6 +17,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 
 @Slf4j
 @Component
@@ -27,6 +30,7 @@ public class TransactionFailureConsumer {
     private final ResolutionSuggestionBuilder suggestionBuilder;
     private final ResolutionSuggestionRepository suggestionRepository;
     private final AiDiagnosticMetrics metrics;
+    private final FailureRecordRepository failureRecords;
 
     private static final int TOP_K_MATCHES = 3;
 
@@ -36,7 +40,9 @@ public class TransactionFailureConsumer {
             VectorSimilaritySearchService vectorSearchService,
             ResolutionSuggestionBuilder suggestionBuilder,
             ResolutionSuggestionRepository suggestionRepository,
-            AiDiagnosticMetrics metrics) {
+            AiDiagnosticMetrics metrics,
+            FailureRecordRepository failureRecords) {
+        this.failureRecords = failureRecords;
         this.failureContextBuilder = failureContextBuilder;
         this.embeddingService = embeddingService;
         this.vectorSearchService = vectorSearchService;
@@ -85,7 +91,11 @@ public class TransactionFailureConsumer {
             // 2. Generate vector embedding with timing metric
             long embedStart = System.nanoTime();
             float[] embedding = embeddingService.embed(failureContext);
-            metrics.recordEmbeddingLatency(System.nanoTime() - embedStart, "text-embedding-3-small");
+            metrics.recordEmbeddingLatency(System.nanoTime() - embedStart, embeddingService.modelName());
+
+            // Store the context embedding on the engine-written failure row; keep its id for linking
+            Optional<UUID> failureId = failureRecords.attachEmbedding(
+                    event.tenantId(), event.transactionId(), embedding);
 
             // 3. Perform pgvector HNSW similarity search
             List<VectorMatchProjection> topMatches = vectorSearchService.searchSimilarIssues(
@@ -94,8 +104,15 @@ public class TransactionFailureConsumer {
             // 4. Apply multi-tier threshold classification
             ResolutionSuggestion suggestion = suggestionBuilder.buildSuggestion(event, topMatches);
 
-            // 5. Persist diagnosis to PostgreSQL
+            failureId.ifPresent(suggestion::setFailureId);
+
+            // 5. Persist diagnosis to PostgreSQL (deterministic id => redelivery upserts, A2.9)
             suggestionRepository.save(suggestion);
+
+            // AUTO_RESOLVED: flag the failure resolved. No transaction status change or money movement (G4.4).
+            if (suggestion.isAutoApplied()) {
+                failureRecords.markResolved(event.tenantId(), event.transactionId());
+            }
 
             // 6. Record success and outcome metrics
             metrics.incrementFailuresProcessed(event.tenantId(), "success");

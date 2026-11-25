@@ -1,0 +1,13 @@
+# Default provider. Keep reconguard.ai.provider and spring.ai.model.embedding in sync.
+reconguard:
+  ai:
+    provider: ollama
+spring:
+  ai:
+    model:
+      embedding: ollama
+    ollama:
+      base-url: http://localhost:11434
+      embedding:
+        options:
+          model: nomic-embed-text
