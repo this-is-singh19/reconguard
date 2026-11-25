@@ -1,12 +1,14 @@
 package io.reconguard.reconciliation.repository;
 
-import io.reconguard.reconciliation.model.TransactionRecord;
+import io.reconguard.reconciliation.domain.TransactionRecord;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -18,12 +20,34 @@ public interface TransactionRepository extends JpaRepository<TransactionRecord, 
             @Param("tenantId") String tenantId
     );
 
-    @Modifying
-    @Query("UPDATE TransactionRecord t SET t.status = 'MATCHED', t.matchedWithTransactionId = :counterpartyId, t.updatedAt = CURRENT_TIMESTAMP " +
-            "WHERE t.transactionId = :targetId AND t.tenantId = :tenantId")
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+UPDATE TransactionRecord t
+SET
+    t.status = 'MATCHED',
+    t.gatewayTransactionId = :gatewayTransactionId,
+    t.reconciledAt = :reconciledAt
+WHERE
+    t.id = :targetId
+    AND t.tenantId = :tenantId
+""")
     void linkAndMatch(
             @Param("targetId") String targetId,
-            @Param("counterpartyId") String counterpartyId,
-            @Param("tenantId") String tenantId
+            @Param("gatewayTransactionId") String gatewayTransactionId,
+            @Param("tenantId") String tenantId,
+            @Param("reconciledAt") Instant reconciledAt
     );
+
+    @Query("SELECT COUNT(t) FROM TransactionRecord t WHERE t.status = :status AND t.createdAt < :cutoff")
+    long countByStatusAndCreatedAtBefore(
+            @Param("status") String status,
+            @Param("cutoff") Instant cutoff
+    );
+
+    @Query("SELECT t FROM TransactionRecord t WHERE t.status = 'UNRESOLVED' AND t.createdAt < :cutoff")
+    List<TransactionRecord> findStaleUnresolved(@Param("cutoff") Instant cutoff);
+
+    @Modifying
+    @Query("UPDATE TransactionRecord t SET t.status = 'FAILED' WHERE t.id IN :ids")
+    void markAsFailed(@Param("ids") List<String> ids);
 }

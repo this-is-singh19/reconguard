@@ -30,6 +30,11 @@ public class TransactionConsumer {
         log.info("Received transaction stream event from Kafka. TxId: {}, Type: {}",
                 event.transactionId(), event.type());
 
+        // --- TEMPORARY DLQ TEST TRIGGER ---
+        if (event.transactionId() != null && event.transactionId().startsWith("FAIL-TEST")) {
+            throw new RuntimeException("Intentional failure forced for DLQ verification! TxId: " + event.transactionId());
+        }
+
         // 1. Evaluate the Atomic Idempotency Guard first
         if (!idempotencyGuard.checkAndClaim(event.tenantId(), event.transactionId())) {
             log.warn("Deduplication Guard Triggered! Duplicate event dropped. Tenant: {}, TxId: {}",
