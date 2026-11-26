@@ -19,6 +19,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -65,13 +66,13 @@ class MatchingEngineServiceTest {
         TransactionEvent incomingEvent = createEvent("tx-2", TransactionEventType.PAYMENT, "100.01", baseTime.plusSeconds(10));
         TransactionEvent bufferedEvent = createEvent("tx-1", TransactionEventType.ORDER, "100.00", baseTime);
 
-        when(windowBufferService.getBufferedCounterparty(tenantId, orderId)).thenReturn(bufferedEvent);
+        when(windowBufferService.getBufferedCounterparty(tenantId, orderId, TransactionEventType.ORDER)).thenReturn(bufferedEvent);
 
         // Act
         matchingEngineService.reconcile(incomingEvent);
 
         // Assert
-        verify(windowBufferService).removeEvent(tenantId, orderId);
+        verify(windowBufferService).removeEvent(tenantId, orderId, TransactionEventType.ORDER);
 
         ArgumentCaptor<TransactionRecord> recordCaptor = ArgumentCaptor.forClass(TransactionRecord.class);
         verify(transactionRepository, times(2)).save(recordCaptor.capture());
@@ -98,9 +99,10 @@ class MatchingEngineServiceTest {
                 .eventTimestamp(baseTime)
                 .build();
 
-        when(windowBufferService.getBufferedCounterparty(tenantId, orderId)).thenReturn(null);
+        when(windowBufferService.getBufferedCounterparty(tenantId, orderId, TransactionEventType.ORDER)).thenReturn(null);
         when(transactionRepository.findUnresolvedByOrderIdAndTenant(orderId, tenantId))
-                .thenReturn(Optional.of(dbRecord));
+                .thenReturn(List.of(dbRecord));
+        when(transactionRepository.linkAndMatch(eq("tx-1"), eq("tx-2"), eq(tenantId), any(Instant.class))).thenReturn(1);
 
         // Act
         matchingEngineService.reconcile(incomingEvent);
@@ -108,7 +110,7 @@ class MatchingEngineServiceTest {
         // Assert
         verify(transactionRepository).save(any(TransactionRecord.class));
         verify(transactionRepository).linkAndMatch(eq("tx-1"), eq("tx-2"), eq(tenantId), any(Instant.class));
-        verify(windowBufferService).removeEvent(tenantId, orderId);
+        verify(windowBufferService).removeEvent(tenantId, orderId, TransactionEventType.ORDER);
     }
 
     @Test
@@ -118,8 +120,8 @@ class MatchingEngineServiceTest {
         TransactionEvent incomingEvent = createEvent("tx-2", TransactionEventType.PAYMENT, "105.00", baseTime);
         TransactionEvent bufferedEvent = createEvent("tx-1", TransactionEventType.ORDER, "100.00", baseTime);
 
-        when(windowBufferService.getBufferedCounterparty(tenantId, orderId)).thenReturn(bufferedEvent);
-        when(transactionRepository.findUnresolvedByOrderIdAndTenant(orderId, tenantId)).thenReturn(Optional.empty());
+        when(windowBufferService.getBufferedCounterparty(tenantId, orderId, TransactionEventType.ORDER)).thenReturn(bufferedEvent);
+        when(transactionRepository.findUnresolvedByOrderIdAndTenant(orderId, tenantId)).thenReturn(List.of());
 
         // Act
         matchingEngineService.reconcile(incomingEvent);
@@ -137,8 +139,8 @@ class MatchingEngineServiceTest {
         TransactionEvent incomingEvent = createEvent("tx-2", TransactionEventType.PAYMENT, "100.00", baseTime.plusSeconds(300));
         TransactionEvent bufferedEvent = createEvent("tx-1", TransactionEventType.ORDER, "100.00", baseTime);
 
-        when(windowBufferService.getBufferedCounterparty(tenantId, orderId)).thenReturn(bufferedEvent);
-        when(transactionRepository.findUnresolvedByOrderIdAndTenant(orderId, tenantId)).thenReturn(Optional.empty());
+        when(windowBufferService.getBufferedCounterparty(tenantId, orderId, TransactionEventType.ORDER)).thenReturn(bufferedEvent);
+        when(transactionRepository.findUnresolvedByOrderIdAndTenant(orderId, tenantId)).thenReturn(List.of());
 
         // Act
         matchingEngineService.reconcile(incomingEvent);
@@ -146,6 +148,42 @@ class MatchingEngineServiceTest {
         // Assert
         verify(transactionRepository).save(any(TransactionRecord.class));
         verify(windowBufferService).bufferEvent(incomingEvent);
+    }
+
+    @Test
+    @DisplayName("A3.12: a transaction id owned by another tenant is rejected, never overwritten")
+    void shouldRejectTransactionIdOwnedByAnotherTenant() {
+        TransactionEvent incomingEvent = createEvent("tx-9", TransactionEventType.PAYMENT, "100.00", baseTime);
+        TransactionRecord foreign = TransactionRecord.builder()
+                .id("tx-9").tenantId("other-tenant").orderId("o-x").amount(new BigDecimal("1.0000"))
+                .currency("USD").type("ORDER").status("UNRESOLVED").eventTimestamp(baseTime).build();
+        when(windowBufferService.getBufferedCounterparty(tenantId, orderId, TransactionEventType.ORDER)).thenReturn(null);
+        when(transactionRepository.findUnresolvedByOrderIdAndTenant(orderId, tenantId)).thenReturn(List.of());
+        when(transactionRepository.findById("tx-9")).thenReturn(Optional.of(foreign));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> matchingEngineService.reconcile(incomingEvent))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(transactionRepository, never()).save(any(TransactionRecord.class));
+    }
+
+    @Test
+    @DisplayName("A3.5: with several unresolved legs, the one that matches within tolerance is chosen")
+    void shouldPickMatchingCounterpartAmongSeveralUnresolvedLegs() {
+        TransactionEvent incomingEvent = createEvent("tx-2", TransactionEventType.PAYMENT, "100.00", baseTime);
+        TransactionRecord wrongAmount = TransactionRecord.builder()
+                .id("tx-old").tenantId(tenantId).orderId(orderId).amount(new BigDecimal("55.0000"))
+                .currency("USD").type("ORDER").status("UNRESOLVED").eventTimestamp(baseTime).build();
+        TransactionRecord rightLeg = TransactionRecord.builder()
+                .id("tx-1").tenantId(tenantId).orderId(orderId).amount(new BigDecimal("100.00"))
+                .currency("USD").type("ORDER").status("UNRESOLVED").eventTimestamp(baseTime).build();
+        when(windowBufferService.getBufferedCounterparty(tenantId, orderId, TransactionEventType.ORDER)).thenReturn(null);
+        when(transactionRepository.findUnresolvedByOrderIdAndTenant(orderId, tenantId)).thenReturn(List.of(wrongAmount, rightLeg));
+        when(transactionRepository.linkAndMatch(eq("tx-1"), eq("tx-2"), eq(tenantId), any(Instant.class))).thenReturn(1);
+
+        matchingEngineService.reconcile(incomingEvent);
+
+        verify(transactionRepository).linkAndMatch(eq("tx-1"), eq("tx-2"), eq(tenantId), any(Instant.class));
+        verify(transactionRepository, never()).linkAndMatch(eq("tx-old"), any(), any(), any());
     }
 
     private TransactionEvent createEvent(

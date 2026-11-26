@@ -5,6 +5,7 @@ import io.reconguard.common.model.TransactionEvent;
 import io.reconguard.common.multitenancy.TenantContext;
 import io.reconguard.reconciliation.config.KafkaConsumerConfig;
 import io.reconguard.reconciliation.idempotency.IdempotencyGuard;
+import io.reconguard.reconciliation.repository.TransactionRepository;
 import io.reconguard.reconciliation.service.MatchingEngineService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -17,15 +18,18 @@ public class TransactionConsumer {
 
     private final MatchingEngineService matchingEngineService;
     private final IdempotencyGuard idempotencyGuard;
+    private final TransactionRepository transactionRepository;
 
     public TransactionConsumer(MatchingEngineService matchingEngineService,
-                               IdempotencyGuard idempotencyGuard) {
+                               IdempotencyGuard idempotencyGuard,
+                               TransactionRepository transactionRepository) {
         this.matchingEngineService = matchingEngineService;
         this.idempotencyGuard = idempotencyGuard;
+        this.transactionRepository = transactionRepository;
     }
 
     @KafkaListener(
-            topics = "reconguard.transactions.raw",
+            topics = "${reconguard.topics.raw-transactions}",
             groupId = "${spring.kafka.consumer.group-id}",
             containerFactory = KafkaConsumerConfig.TRANSACTION_EVENT_LISTENER_FACTORY
     )
@@ -43,9 +47,15 @@ public class TransactionConsumer {
 
         // 1. Evaluate the Atomic Idempotency Guard first
         if (!idempotencyGuard.checkAndClaim(event.tenantId(), event.transactionId())) {
-            log.warn("Deduplication Guard Triggered! Duplicate event dropped. Tenant: {}, TxId: {}",
+            // A3.2: the Redis claim is only a fast path. The DB row is the authority. A claim without a row means
+            // an earlier attempt crashed after claiming and before persisting, so the leg must be processed again.
+            if (transactionRepository.existsByIdAndTenantId(event.transactionId(), event.tenantId())) {
+                log.warn("Deduplication Guard Triggered! Duplicate event dropped. Tenant: {}, TxId: {}",
+                        event.tenantId(), event.transactionId());
+                return; // Clean short-circuit. Kafka offset commits normally.
+            }
+            log.warn("Idempotency claim exists but no persisted leg found; reprocessing. Tenant: {}, TxId: {}",
                     event.tenantId(), event.transactionId());
-            return; // Clean short-circuit. Kafka offset commits normally.
         }
 
         try {

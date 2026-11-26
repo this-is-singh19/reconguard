@@ -1,10 +1,16 @@
 package io.reconguard.reconciliation.window;
 
 import io.reconguard.common.model.TransactionEvent;
+import io.reconguard.common.model.TransactionEventType;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import java.time.Duration;
 
+/**
+ * Short-lived buffer of unmatched legs (A3.5 cardinality rule: at most one buffered leg per order per side).
+ * Each side has its own slot, so an ORDER waiting for a PAYMENT is not overwritten by a non-matching PAYMENT.
+ * Same-side duplicates still overwrite their own slot; the DB keeps every leg, and the sweeper fails the rest.
+ */
 @Service
 public class WindowBufferService {
 
@@ -20,30 +26,26 @@ public class WindowBufferService {
      * Stashes an unmatched transaction leg into the temporary 35-second window buffer.
      */
     public void bufferEvent(TransactionEvent event) {
-        String key = BUFFER_PREFIX + event.tenantId() + ":" + event.orderId();
-
-        // Cache the transaction event object, expiring after our 35-second window SLA
-        redisTemplate.opsForValue().set(key, event, Duration.ofSeconds(WINDOW_TTL_SECONDS));
+        redisTemplate.opsForValue().set(key(event.tenantId(), event.orderId(), event.type()),
+                event, Duration.ofSeconds(WINDOW_TTL_SECONDS));
     }
 
     /**
-     * Tries to fetch a buffered counter-leg for a matching order ID.
+     * Returns the buffered leg of the given side (the counterparty of the incoming event), or null.
      */
-    public TransactionEvent getBufferedCounterparty(String tenantId, String orderId) {
-        String key = BUFFER_PREFIX + tenantId + ":" + orderId;
-        Object cached = redisTemplate.opsForValue().get(key);
-
-        if (cached instanceof TransactionEvent) {
-            return (TransactionEvent) cached;
-        }
-        return null;
+    public TransactionEvent getBufferedCounterparty(String tenantId, String orderId, TransactionEventType counterpartyType) {
+        Object cached = redisTemplate.opsForValue().get(key(tenantId, orderId, counterpartyType));
+        return cached instanceof TransactionEvent event ? event : null;
     }
 
     /**
-     * Removes the item from the buffer once a successful match is finalized.
+     * Removes the buffered leg of the given side once a match has been finalized.
      */
-    public void removeEvent(String tenantId, String orderId) {
-        String key = BUFFER_PREFIX + tenantId + ":" + orderId;
-        redisTemplate.delete(key);
+    public void removeEvent(String tenantId, String orderId, TransactionEventType side) {
+        redisTemplate.delete(key(tenantId, orderId, side));
+    }
+
+    private static String key(String tenantId, String orderId, TransactionEventType side) {
+        return BUFFER_PREFIX + tenantId + ":" + orderId + ":" + side.name();
     }
 }

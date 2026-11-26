@@ -13,8 +13,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -45,6 +48,10 @@ public class WindowUnresolvedTransactionSweeper {
     /**
      * Periodic sweeper job to detect stale unresolved transactions, mark them as FAILED,
      * and emit failure events to Kafka for Phase 3 AI diagnostic processing.
+     * <p>
+     * A3.7: failure events are published only after the DB transaction commits. If the commit fails, nothing
+     * is emitted for rows that remain UNRESOLVED. The transition is status-guarded, so a leg matched
+     * concurrently is not failed.
      */
     @Scheduled(fixedDelayString = "${reconguard.sweeper.interval-ms:60000}")
     @Transactional
@@ -64,10 +71,15 @@ public class WindowUnresolvedTransactionSweeper {
                 .map(TransactionRecord::getId)
                 .toList();
 
-        // 1. Transition database status to FAILED
-        transactionRepository.markAsFailed(staleIds);
+        // 1. Transition database status to FAILED (only rows still UNRESOLVED)
+        int transitioned = transactionRepository.markAsFailed(staleIds);
+        if (transitioned != staleIds.size()) {
+            log.warn("Only {} of {} stale legs were still UNRESOLVED; the rest changed state concurrently.",
+                    transitioned, staleIds.size());
+        }
 
-        // 2. Delegate failure event emission to FailurePublisher
+        // 2. Record the failure rows now (same tx), emit the Kafka events only after commit
+        List<TransactionEvent> failures = new ArrayList<>();
         for (TransactionRecord record : staleRecords) {
             Instant timestamp = record.getEventTimestamp() != null
                     ? record.getEventTimestamp()
@@ -87,10 +99,28 @@ public class WindowUnresolvedTransactionSweeper {
             );
 
             recordFailure(record, timestamp);
-            failurePublisher.publishFailure(record.getTenantId(), event, FAILURE_REASON);
+            failures.add(event);
         }
 
+        publishAfterCommit(failures);
+
         log.info("Successfully swept and transitioned {} unresolved transactions to FAILED state.", staleRecords.size());
+    }
+
+    /** Publishes once the surrounding transaction has committed; immediately if there is none (e.g. unit tests). */
+    private void publishAfterCommit(List<TransactionEvent> events) {
+        Runnable publish = () -> events.forEach(event ->
+                failurePublisher.publishFailure(event.tenantId(), event, FAILURE_REASON));
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    publish.run();
+                }
+            });
+        } else {
+            publish.run();
+        }
     }
 
     /** Persists the failure row (A2.8) unless one already exists for (tenant, transaction). */

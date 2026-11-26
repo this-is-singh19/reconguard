@@ -1,10 +1,9 @@
 package io.reconguard.ingestion.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.reconguard.common.multitenancy.TenantContext;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import jakarta.annotation.PostConstruct;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -22,15 +21,10 @@ public class HmacSecurityInterceptor implements HandlerInterceptor {
 
     private static final ObjectMapper PROBLEM_MAPPER = new ObjectMapper();
 
-    // No default: startup fails when reconguard.webhook.secret is unset (fail fast).
-    @Value("${reconguard.webhook.secret}")
-    private String webhookSecret;
+    private final WebhookSecurityProperties securityProperties;
 
-    @PostConstruct
-    void validateSecret() {
-        if (webhookSecret == null || webhookSecret.isBlank()) {
-            throw new IllegalStateException("reconguard.webhook.secret must be set to a non-blank value");
-        }
+    public HmacSecurityInterceptor(WebhookSecurityProperties securityProperties) {
+        this.securityProperties = securityProperties;
     }
 
     @Override
@@ -51,6 +45,14 @@ public class HmacSecurityInterceptor implements HandlerInterceptor {
         if (!(current instanceof RequestCachingFilter.CachedBodyRequestWrapper wrapper)) {
             writeProblem(response, HttpStatus.INTERNAL_SERVER_ERROR, "Signature Verification Unavailable",
                     "Request body unavailable for signature verification", "internal-error");
+            return false;
+        }
+
+        // The tenant is set by TenantInterceptor, which runs first. That tenant's secret verifies the body (A4.1).
+        String webhookSecret = securityProperties.secretFor(TenantContext.getTenantId());
+        if (webhookSecret == null) {
+            writeProblem(response, HttpStatus.UNAUTHORIZED, "Unknown Tenant",
+                    "No webhook secret is configured for this tenant", "unknown-tenant");
             return false;
         }
 

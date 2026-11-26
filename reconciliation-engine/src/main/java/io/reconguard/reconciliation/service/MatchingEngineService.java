@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.reconguard.common.model.TransactionEvent;
+import io.reconguard.common.model.TransactionEventType;
 import io.reconguard.reconciliation.config.MatchingToleranceConfig;
 import io.reconguard.reconciliation.domain.TransactionRecord;
 import io.reconguard.reconciliation.repository.TransactionRepository;
@@ -52,7 +53,8 @@ public class MatchingEngineService {
     }
 
     /**
-     * Executes reconciliation matching algorithms on incoming transaction streaming entries.
+     * Executes reconciliation matching for one incoming leg. Cardinality is 1:1 per side (A3.5): an incoming
+     * leg is matched against the opposite side only. Matching is always scoped to the event's tenant (A3.12).
      */
     @Transactional
     public void reconcile(TransactionEvent event) {
@@ -76,42 +78,54 @@ public class MatchingEngineService {
         log.info("Executing matching evaluation algorithm for TxId: {}, OrderId: {}",
                 event.transactionId(), event.orderId());
 
-        TransactionEvent bufferedCounterparty = windowBufferService.getBufferedCounterparty(event.tenantId(), event.orderId());
+        TransactionEventType counterpartSide = opposite(event.type());
+
+        // 1. Fast path: the counterpart is still in the Redis window buffer
+        TransactionEvent bufferedCounterparty = windowBufferService.getBufferedCounterparty(
+                event.tenantId(), event.orderId(), counterpartSide);
         if (isMatchingCounterparty(event, bufferedCounterparty)) {
             persistMatchedPair(event, bufferedCounterparty);
-            windowBufferService.removeEvent(event.tenantId(), event.orderId());
+            windowBufferService.removeEvent(event.tenantId(), event.orderId(), counterpartSide);
             matchedCounter.increment();
             log.info("Reconciliation matched buffered legs. Current TxId: {}, Counterparty TxId: {}",
                     event.transactionId(), bufferedCounterparty.transactionId());
             return STATUS_MATCHED;
         }
 
-        var databaseCounterparty = transactionRepository.findUnresolvedByOrderIdAndTenant(
-                event.orderId(), event.tenantId());
+        // 2. Slow path: any UNRESOLVED opposite-side leg of this order in the DB (survives Redis TTL/restart)
+        TransactionRecord dbCounterpart = transactionRepository
+                .findUnresolvedByOrderIdAndTenant(event.orderId(), event.tenantId())
+                .stream()
+                .filter(candidate -> isMatchingCounterparty(event, candidate))
+                .findFirst()
+                .orElse(null);
 
-        if (databaseCounterparty.isPresent() && isMatchingCounterparty(event, databaseCounterparty.get())) {
-            TransactionRecord counterpart = databaseCounterparty.get();
-            transactionRepository.save(toRecord(event, STATUS_MATCHED, counterpart.getId()));
+        if (dbCounterpart != null) {
+            upsertLeg(event, STATUS_MATCHED, dbCounterpart.getId());
+            int linked = transactionRepository.linkAndMatch(
+                    dbCounterpart.getId(), event.transactionId(), event.tenantId(), Instant.now());
+            if (linked != 1) {
+                // Counterpart changed state between read and update (e.g. swept to FAILED). Roll back this tx.
+                throw new IllegalStateException("Counterpart " + dbCounterpart.getId() + " changed state during match");
+            }
 
-            transactionRepository.linkAndMatch(
-                    counterpart.getId(),
-                    event.transactionId(),
-                    event.tenantId(),
-                    Instant.now()
-            );
-
-            windowBufferService.removeEvent(event.tenantId(), event.orderId());
+            windowBufferService.removeEvent(event.tenantId(), event.orderId(), counterpartSide);
             matchedCounter.increment();
             log.info("Reconciliation matched persisted legs. Current TxId: {}, Counterparty TxId: {}",
-                    event.transactionId(), counterpart.getId());
+                    event.transactionId(), dbCounterpart.getId());
             return STATUS_MATCHED;
         }
 
+        // 3. No counterpart: keep the leg durable in the DB and buffer it for the window
         log.info("No matching counterpart found within tolerance parameters. Saving leg and buffering Order ID: {}", event.orderId());
-        transactionRepository.save(toRecord(event, STATUS_UNRESOLVED, null));
+        upsertLeg(event, STATUS_UNRESOLVED, null);
         windowBufferService.bufferEvent(event);
         unresolvedCounter.increment();
         return STATUS_UNRESOLVED;
+    }
+
+    private static TransactionEventType opposite(TransactionEventType type) {
+        return type == TransactionEventType.ORDER ? TransactionEventType.PAYMENT : TransactionEventType.ORDER;
     }
 
     private boolean isMatchingCounterparty(TransactionEvent event, TransactionEvent counterparty) {
@@ -151,26 +165,32 @@ public class MatchingEngineService {
     }
 
     private void persistMatchedPair(TransactionEvent current, TransactionEvent buffered) {
-        transactionRepository.save(toRecord(current, STATUS_MATCHED, buffered.transactionId()));
-        transactionRepository.save(toRecord(buffered, STATUS_MATCHED, current.transactionId()));
+        // The buffered leg already has a DB row (saved as UNRESOLVED when it was buffered): update it, do not re-insert.
+        upsertLeg(current, STATUS_MATCHED, buffered.transactionId());
+        upsertLeg(buffered, STATUS_MATCHED, current.transactionId());
     }
 
-    private TransactionRecord toRecord(TransactionEvent event, String status, String counterpartyId) {
-        TransactionRecord.TransactionRecordBuilder builder = TransactionRecord.builder()
-                .id(event.transactionId())
-                .tenantId(event.tenantId())
-                .orderId(event.orderId())
-                .amount(event.monetaryAmount().value())
-                .currency(event.monetaryAmount().currency())
-                .type(event.type().name())
-                .status(status)
-                .eventTimestamp(event.timestamp())
-                .gatewayTransactionId(counterpartyId);
-
-        if (STATUS_MATCHED.equals(status)) {
-            builder.reconciledAt(Instant.now());
+    /**
+     * Inserts or updates one leg by transaction id. A row owned by another tenant is never touched (A3.12):
+     * transaction ids are global primary keys, so a collision across tenants is rejected, not overwritten.
+     */
+    private void upsertLeg(TransactionEvent event, String status, String counterpartId) {
+        var existing = transactionRepository.findById(event.transactionId());
+        if (existing.isPresent() && !event.tenantId().equals(existing.get().getTenantId())) {
+            throw new IllegalArgumentException(
+                    "Transaction id " + event.transactionId() + " already belongs to another tenant");
         }
 
-        return builder.build();
+        TransactionRecord record = existing.orElseGet(TransactionRecord::new);
+        record.setId(event.transactionId());
+        record.setTenantId(event.tenantId());
+        record.setOrderId(event.orderId());
+        record.setAmount(event.monetaryAmount().value());
+        record.setCurrency(event.monetaryAmount().currency());
+        record.setType(event.type().name());
+        record.setStatus(status);
+        record.setEventTimestamp(event.timestamp());
+        record.setMatchedWithTransactionId(counterpartId);
+        transactionRepository.save(record);
     }
 }

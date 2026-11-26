@@ -19,12 +19,12 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        // 1. Order matters: Authenticate/Verify security first
-        registry.addInterceptor(hmacSecurityInterceptor)
+        // 1. Order matters: the tenant is resolved first (A4.1), because the HMAC check uses that tenant's secret
+        registry.addInterceptor(tenantInterceptor)
                 .addPathPatterns("/api/v1/webhooks/**");
 
-        // 2. Then set up Tenant Context
-        registry.addInterceptor(tenantInterceptor)
+        // 2. Then verify the signature with the tenant's secret
+        registry.addInterceptor(hmacSecurityInterceptor)
                 .addPathPatterns("/api/v1/webhooks/**");
     }
 }

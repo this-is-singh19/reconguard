@@ -1,5 +1,7 @@
 package io.reconguard.ingestion.exception;
 
+import io.reconguard.ingestion.exception.EventPublishException;
+import io.reconguard.ingestion.exception.TenantMismatchException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.http.ProblemDetail;
@@ -68,6 +70,28 @@ public class GlobalExceptionHandler {
         problemDetail.setTitle("Malformed Request Body");
         problemDetail.setProperty("timestamp", Instant.now());
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(problemDetail);
+    }
+
+    @ExceptionHandler(TenantMismatchException.class)
+    public ResponseEntity<ProblemDetail> handleTenantMismatch(TenantMismatchException ex) {
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+        problemDetail.setType(URI.create("https://api.reconguard.io/errors/tenant-mismatch"));
+        problemDetail.setTitle("Tenant Mismatch");
+        problemDetail.setProperty("timestamp", Instant.now());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(problemDetail);
+    }
+
+    /** Broker did not ack. Nothing was published and the idempotency key was released, so the client may retry (A4.4). */
+    @ExceptionHandler(EventPublishException.class)
+    public ResponseEntity<ProblemDetail> handlePublishFailure(EventPublishException ex) {
+        ProblemDetail problemDetail = ProblemDetail.forStatusAndDetail(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "Transaction could not be accepted right now. Retry with the same idempotency key."
+        );
+        problemDetail.setType(URI.create("https://api.reconguard.io/errors/publish-unavailable"));
+        problemDetail.setTitle("Event Broker Unavailable");
+        problemDetail.setProperty("timestamp", Instant.now());
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(problemDetail);
     }
 
     @ExceptionHandler(Exception.class)

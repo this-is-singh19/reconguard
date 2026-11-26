@@ -69,14 +69,15 @@ public class WebhookController {
         log.info("Received fresh transaction ingestion request: ID={}, IdempotencyKey={}",
                 event.transactionId(), idempotencyKey);
 
-        // 1. Clean data and bind client tenant variables
-        TransactionEvent normalized = normalizationService.normalize(event);
-
-        // 2. Stream safely to Kafka partition brokers
+        TransactionEvent normalized;
         try {
+            // 1. Clean data and bind client tenant variables (rejects a body/header tenant mismatch, A4.2)
+            normalized = normalizationService.normalize(event);
+
+            // 2. Publish and wait for the broker ack (A4.4)
             transactionProducer.sendTransactionEvent(normalized);
         } catch (RuntimeException ex) {
-            // Nothing was published: release the key so the client can retry.
+            // Nothing was published: release the key so the client can retry with the same key.
             redisTemplate.delete(redisKey);
             throw ex;
         }

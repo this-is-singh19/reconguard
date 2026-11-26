@@ -4,6 +4,7 @@ import io.reconguard.common.model.MonetaryAmount;
 import io.reconguard.common.model.TransactionEvent;
 import io.reconguard.common.multitenancy.TenantContext;
 import io.reconguard.ingestion.dto.GatewayPayload;
+import io.reconguard.ingestion.exception.TenantMismatchException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -24,6 +25,11 @@ public class NormalizationService {
 
         // Extract the safe context extracted by our TenantInterceptor
         String activeTenant = TenantContext.getTenantId();
+
+        // A4.2: a body tenant that disagrees with the authenticated tenant is rejected, not silently replaced
+        if (rawEvent.tenantId() != null && !rawEvent.tenantId().strip().equals(activeTenant)) {
+            throw new TenantMismatchException("Body tenantId does not match the authenticated tenant");
+        }
 
         // Handle timestamp fallbacks safely if the provider didn't pass one
         Instant normalizedTimestamp = rawEvent.timestamp() != null ? rawEvent.timestamp() : Instant.now();

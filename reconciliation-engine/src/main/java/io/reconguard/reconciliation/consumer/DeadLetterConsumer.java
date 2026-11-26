@@ -4,6 +4,8 @@ import io.reconguard.common.logging.TransactionMdc;
 import io.reconguard.common.model.TransactionEvent;
 import io.reconguard.common.multitenancy.TenantContext;
 import io.reconguard.reconciliation.config.KafkaConsumerConfig;
+import io.reconguard.reconciliation.domain.DeadLetterEvent;
+import io.reconguard.reconciliation.repository.DeadLetterEventRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.KafkaHeaders;
@@ -11,12 +13,20 @@ import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
+
 @Slf4j
 @Component
 public class DeadLetterConsumer {
 
+    private final DeadLetterEventRepository deadLetterEventRepository;
+
+    public DeadLetterConsumer(DeadLetterEventRepository deadLetterEventRepository) {
+        this.deadLetterEventRepository = deadLetterEventRepository;
+    }
+
     @KafkaListener(
-            topics = "reconguard.transactions.raw.DLQ",
+            topics = "${reconguard.topics.raw-transactions}.DLQ",
             groupId = "${reconguard.kafka.dlq-group-id}",
             containerFactory = KafkaConsumerConfig.TRANSACTION_EVENT_LISTENER_FACTORY
     )
@@ -54,7 +64,16 @@ public class DeadLetterConsumer {
                     failureReason
             );
 
-            // TODO: Optional extension — Store to un-reconciled/dlq audit table in database for UI inspection
+            // A3.3: persist so operators can inspect and replay (G3.4). Failure here is logged, not retried.
+            deadLetterEventRepository.save(DeadLetterEvent.builder()
+                    .tenantId(event != null ? event.tenantId() : null)
+                    .orderId(event != null ? event.orderId() : null)
+                    .transactionId(event != null ? event.transactionId() : null)
+                    .originalTopic(originalTopic != null ? new String(originalTopic) : null)
+                    .dlqTopic(dlqTopic)
+                    .failureReason(exceptionMessage != null ? new String(exceptionMessage) : null)
+                    .receivedAt(Instant.now())
+                    .build());
 
         } finally {
             TenantContext.clear();

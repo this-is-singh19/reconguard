@@ -86,7 +86,10 @@ public class KafkaConsumerConfig {
         backOff.setMaxInterval(8000L);
         backOff.setMaxAttempts(MAX_RETRIES);
 
-        factory.setCommonErrorHandler(new DefaultErrorHandler(recoverer, backOff));
+        DefaultErrorHandler errorHandler = new DefaultErrorHandler(recoverer, backOff);
+        // A3.1: programming/data errors will never succeed on retry; send them to the DLQ immediately.
+        errorHandler.addNotRetryableExceptions(IllegalArgumentException.class, NullPointerException.class);
+        factory.setCommonErrorHandler(errorHandler);
         return factory;
     }
 }

@@ -22,7 +22,7 @@ import static org.mockito.Mockito.*;
 
 /** 0F.2: HMAC over a real HTTP request through the full servlet stack (embedded server, real filter chain). */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "reconguard.webhook.secret=real-http-secret")
+        properties = "reconguard.webhook.secrets.t1=real-http-secret")
 class HmacRealHttpTest {
 
     private static final String SECRET = "real-http-secret";

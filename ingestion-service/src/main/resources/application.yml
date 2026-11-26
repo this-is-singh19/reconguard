@@ -23,9 +23,21 @@ spring:
       properties:
         # Ensures Spring adds type mapping headers so consumers know it's a TransactionEvent
         spring.json.add.type.headers: true
+        # A4.8: idempotent producer (no duplicates from producer retries). Requires acks=all, retries>0.
+        enable.idempotence: true
+        # Bounded delivery: a send either succeeds or fails within this window (kept below the 20s publish wait)
+        delivery.timeout.ms: 15000
+        request.timeout.ms: 10000
       # Retries and Delivery Guarantees for Financial Stream Integrity
       retries: 3
       acks: all
+
+# Per-tenant webhook secrets (A4.1). Set via environment or a secrets file, never committed:
+#   reconguard.webhook.secrets.<tenantId>: <secret>
+# Startup fails if none is set or any is blank.
+reconguard:
+  webhook:
+    secrets: {}
 
 # Diagnostic Log Profiles
 logging:

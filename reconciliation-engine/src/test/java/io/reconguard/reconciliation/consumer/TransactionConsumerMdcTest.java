@@ -4,6 +4,7 @@ import io.reconguard.common.model.MonetaryAmount;
 import io.reconguard.common.model.TransactionEvent;
 import io.reconguard.common.model.TransactionEventType;
 import io.reconguard.reconciliation.idempotency.IdempotencyGuard;
+import io.reconguard.reconciliation.repository.TransactionRepository;
 import io.reconguard.reconciliation.service.MatchingEngineService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -27,7 +28,8 @@ class TransactionConsumerMdcTest {
 
     private final MatchingEngineService matching = mock(MatchingEngineService.class);
     private final IdempotencyGuard guard = mock(IdempotencyGuard.class);
-    private final TransactionConsumer consumer = new TransactionConsumer(matching, guard);
+    private final TransactionRepository repository = mock(TransactionRepository.class);
+    private final TransactionConsumer consumer = new TransactionConsumer(matching, guard, repository);
 
     @AfterEach
     void clearMdc() {

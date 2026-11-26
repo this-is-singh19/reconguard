@@ -37,7 +37,7 @@ class NormalizationServiceTest {
     void shouldNormalizeGenericEvent() {
         TransactionEvent raw = new TransactionEvent(
                 " tx-99 ",
-                "temp-tenant",
+                "tenant-acme",
                 " order-88 ",
                 new MonetaryAmount(new BigDecimal("150.5"), " usd "),
                 TransactionEventType.ORDER,
@@ -51,6 +51,18 @@ class NormalizationServiceTest {
         assertEquals("order-88", normalized.orderId());
         assertEquals(new BigDecimal("150.5000"), normalized.monetaryAmount().value());
         assertEquals("USD", normalized.monetaryAmount().currency());
+    }
+
+    @Test
+    @DisplayName("A4.2: a body tenant that differs from the authenticated tenant is rejected")
+    void shouldRejectBodyTenantMismatch() {
+        TransactionEvent raw = new TransactionEvent(
+                "tx-1", "temp-tenant", "order-1",
+                new MonetaryAmount(new BigDecimal("1.00"), "USD"),
+                TransactionEventType.ORDER, Instant.parse("2026-08-02T10:00:00Z"));
+
+        assertThrows(io.reconguard.ingestion.exception.TenantMismatchException.class,
+                () -> normalizationService.normalize(raw));
     }
 
     @Test

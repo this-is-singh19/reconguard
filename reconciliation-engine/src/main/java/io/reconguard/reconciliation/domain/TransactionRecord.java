@@ -42,8 +42,9 @@ public class TransactionRecord {
     @Column(name = "event_timestamp", nullable = false)
     private Instant eventTimestamp;
 
+    /** Id of the counterpart leg this leg was matched with (null while UNRESOLVED). */
     @Column(name = "matched_with_transaction_id")
-    private String gatewayTransactionId;
+    private String matchedWithTransactionId;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -51,7 +52,10 @@ public class TransactionRecord {
 
     @UpdateTimestamp
     @Column(name = "updated_at")
-    private Instant reconciledAt;
+    private Instant updatedAt;
 
-    // Getters and Setters
+    /** Optimistic lock (A3.11). Null on a new, unsaved entity. */
+    @Version
+    @Column(name = "version", nullable = false)
+    private Long version;
 }

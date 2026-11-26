@@ -124,8 +124,8 @@ class ReconciliationEngineIntegrationTest {
             assertEquals("MATCHED", orderRecord.getStatus());
             assertEquals("MATCHED", paymentRecord.getStatus());
 
-            assertEquals("TXN-PAYMENT-1", orderRecord.getGatewayTransactionId());
-            assertEquals("TXN-ORDER-1", paymentRecord.getGatewayTransactionId());
+            assertEquals("TXN-PAYMENT-1", orderRecord.getMatchedWithTransactionId());
+            assertEquals("TXN-ORDER-1", paymentRecord.getMatchedWithTransactionId());
         });
     }
 }
