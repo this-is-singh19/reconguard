@@ -40,3 +40,12 @@ out/
 *.log
 tmp/
 .mcp.json
+
+
+### Private planning / interview docs (not published)
+INTERVIEW_GUIDE*.md
+PROJECT_ROADMAP.md
+PROJECT_COMPLETION_TASKS.md
+architecture
+docs/ARCHITECTURE.md
+reconguard_architecture.pdf
