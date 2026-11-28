@@ -40,6 +40,36 @@ class ResolutionSuggestionBuilderTest {
         assertThat(ResolutionSuggestionBuilder.suggestionId("tenant-b", "tx-1")).isNotEqualTo(a.getSuggestionId());
     }
 
+    private String statusFor(double sim) {
+        return builder.buildSuggestion(event(), List.of(match(sim))).getStatus();
+    }
+
+    @Test
+    void thresholdBoundaries() {
+        assertThat(statusFor(0.90)).isEqualTo("AUTO_RESOLVED");
+        assertThat(statusFor(0.8999)).isEqualTo("AUTO_CLASSIFIED");
+        assertThat(statusFor(0.75)).isEqualTo("AUTO_CLASSIFIED");
+        assertThat(statusFor(0.7499)).isEqualTo("NEEDS_REVIEW");
+        assertThat(statusFor(1.0)).isEqualTo("AUTO_RESOLVED");
+        assertThat(statusFor(0.0)).isEqualTo("NEEDS_REVIEW");
+    }
+
+    @Test
+    void emptyOrNullMatchesFallBackToNeedsReviewWithZeroScore() {
+        for (List<VectorMatchProjection> m : java.util.Arrays.asList(List.<VectorMatchProjection>of(), null)) {
+            ResolutionSuggestion s = builder.buildSuggestion(event(), m);
+            assertThat(s.getStatus()).isEqualTo("NEEDS_REVIEW");
+            assertThat(s.getMatchedIssueId()).isNull();
+            assertThat(s.getConfidenceScore()).isEqualByComparingTo("0");
+        }
+    }
+
+    @Test
+    void usesTopMatchOnly() {
+        ResolutionSuggestion s = builder.buildSuggestion(event(), List.of(match(0.80), match(0.99)));
+        assertThat(s.getStatus()).isEqualTo("AUTO_CLASSIFIED");
+    }
+
     @Test
     void autoAppliedOnlyForAutoResolved() {
         assertThat(builder.buildSuggestion(event(), List.of(match(0.95))).isAutoApplied()).isTrue();

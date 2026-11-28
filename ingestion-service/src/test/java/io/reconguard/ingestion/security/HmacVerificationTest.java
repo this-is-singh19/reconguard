@@ -11,7 +11,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.MediaType;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -48,8 +47,7 @@ class HmacVerificationTest {
         when(norm.normalize(any(io.reconguard.common.model.TransactionEvent.class))).thenAnswer(i -> i.getArgument(0));
         producer = mock(TransactionProducer.class);
 
-        HmacSecurityInterceptor hmac = new HmacSecurityInterceptor();
-        ReflectionTestUtils.setField(hmac, "webhookSecret", SECRET);
+        HmacSecurityInterceptor hmac = new HmacSecurityInterceptor(props());
 
         TenantContext.setTenantId("t1");
         mvc = MockMvcBuilders.standaloneSetup(new WebhookController(norm, producer, redis, new ObjectMapper()))
@@ -57,6 +55,10 @@ class HmacVerificationTest {
                 .addFilters(new RequestCachingFilter())
                 .addInterceptors(hmac)
                 .build();
+    }
+
+    private static WebhookSecurityProperties props() {
+        return new WebhookSecurityProperties(java.util.Map.of("t1", SECRET));
     }
 
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder req() {
@@ -115,7 +117,7 @@ class HmacVerificationTest {
     @Test
     void failsClosedWhenBodyNotCached() throws Exception {
         MockMvc noFilter = MockMvcBuilders.standaloneSetup(new WebhookController(null, producer, null, new ObjectMapper()))
-                .addInterceptors(new HmacSecurityInterceptor() {{ ReflectionTestUtils.setField(this, "webhookSecret", SECRET); }})
+                .addInterceptors(new HmacSecurityInterceptor(props()))
                 .build();
         noFilter.perform(req().header("X-Signature", HmacUtils.calculateHmac(BODY, SECRET)))
                 .andExpect(status().is5xxServerError());

@@ -57,7 +57,9 @@ public class TransactionProducer {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new EventPublishException("Interrupted while publishing transaction " + event.transactionId(), e);
-        } catch (ExecutionException | TimeoutException e) {
+        } catch (ExecutionException | TimeoutException | RuntimeException e) {
+            // RuntimeException: send() itself throws (e.g. Kafka TimeoutException when metadata is unavailable)
+            // before a future exists. Same outcome as an unacked send: 503, key released, client retries.
             log.error("Failed to publish transaction event to Kafka. TxId: {}", event.transactionId(), e);
             throw new EventPublishException("Broker did not acknowledge transaction " + event.transactionId(), e);
         }

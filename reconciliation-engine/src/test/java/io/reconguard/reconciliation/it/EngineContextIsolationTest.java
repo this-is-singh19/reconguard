@@ -1,4 +1,4 @@
-package io.reconguard.reconciliation;
+package io.reconguard.reconciliation.it;
 
 import io.reconguard.ai.bootstrap.EmbeddingDimensionCheck;
 import io.reconguard.ai.bootstrap.KnownIssueEmbeddingBootstrap;
@@ -10,15 +10,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
-import org.springframework.kafka.test.context.EmbeddedKafka;
-import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.kafka.listener.MessageListenerContainer;
 
@@ -32,27 +25,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * Guards 0F.9 / 0F.30: the engine context must not contain the AI worker's beans, and the engine's own
- * health endpoint must be UP. Runs on the H2 test profile (no Postgres, no Ollama, embedded Kafka).
+ * health endpoint must be UP. Runs on real Postgres/Redis/Kafka containers (no Ollama).
  */
-@SpringBootTest(properties = {
-        // Redis is mocked in this context and no Redis server runs in CI; do not let its health indicator decide.
-        "management.health.redis.enabled=false"
-})
 @AutoConfigureMockMvc
-@EmbeddedKafka(
-        partitions = 1,
-        topics = {
-                "reconguard.transactions.raw",
-                "reconguard.transactions.raw.DLQ",
-                "reconguard.transactions.failures"
-        }
-)
-@ActiveProfiles("test")
-@DirtiesContext
-class EngineContextIsolationTest {
-
-    private static final String FAILURES_TOPIC = "reconguard.transactions.failures";
-    private static final String RAW_TOPIC = "reconguard.transactions.raw";
+class EngineContextIsolationTest extends AbstractEngineIT {
 
     @Autowired
     private ApplicationContext context;
@@ -62,13 +38,6 @@ class EngineContextIsolationTest {
 
     @Autowired
     private MockMvc mockMvc;
-
-    // Present only to satisfy Redis-backed beans in the engine; the AI worker has no Redis dependency.
-    @MockitoBean
-    private RedisTemplate<String, Object> redisTemplate;
-
-    @MockitoBean
-    private StringRedisTemplate stringRedisTemplate;
 
     @Test
     @DisplayName("Engine context has no AI worker beans (listeners, services, bootstrap runners, controller, health)")

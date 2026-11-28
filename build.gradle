@@ -26,3 +26,41 @@ subprojects {
 		}
 	}
 }
+
+// B7: JaCoCo coverage gate. Applied to the code modules (not e2e-tests).
+// `check` (and so `build`) fails if service/logic packages drop below 70% line coverage.
+// Run `./gradlew jacocoTestCoverageVerification` after tests; HTML report: build/reports/jacoco/test/html.
+def coverageGate = [
+		'common'                : ['io/reconguard/common/logging/MaskingConverter*'],
+		'ingestion-service'     : ['io/reconguard/ingestion/service/**', 'io/reconguard/ingestion/security/**'],
+		'reconciliation-engine' : ['io/reconguard/reconciliation/service/**', 'io/reconguard/reconciliation/idempotency/**'],
+		'ai-diagnostic-worker'  : ['io/reconguard/ai/service/**'],
+]
+
+configure(subprojects.findAll { coverageGate.containsKey(it.name) }) {
+	apply plugin: 'jacoco'
+
+	jacoco { toolVersion = '0.8.12' }
+
+	tasks.named('test') { finalizedBy 'jacocoTestReport' }
+
+	tasks.named('jacocoTestReport') {
+		dependsOn 'test'
+		reports { xml.required = true; html.required = true }
+	}
+
+	tasks.named('jacocoTestCoverageVerification') {
+		dependsOn 'test'
+		def pkgs = coverageGate[project.name]
+		classDirectories.setFrom(files(sourceSets.main.output.classesDirs.files.collect {
+			fileTree(it) { include pkgs }
+		}))
+		violationRules {
+			rule {
+				limit { counter = 'LINE'; value = 'COVEREDRATIO'; minimum = 0.70 }
+			}
+		}
+	}
+
+	tasks.named('check') { dependsOn 'jacocoTestCoverageVerification' }
+}

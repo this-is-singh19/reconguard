@@ -1,0 +1,43 @@
+plugins {
+    id 'java'
+    id 'io.spring.dependency-management'
+}
+
+// Cross-service end-to-end tests (B6). No production code here: the test starts the three real Spring Boot
+// jars as separate processes (ingestion, engine, AI worker) against shared Testcontainers. Needs Docker.
+dependencyManagement {
+    imports {
+        mavenBom 'org.springframework.boot:spring-boot-dependencies:3.5.13'
+    }
+}
+
+evaluationDependsOn(':ingestion-service')
+evaluationDependsOn(':reconciliation-engine')
+evaluationDependsOn(':ai-diagnostic-worker')
+
+dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.assertj:assertj-core'
+    testImplementation 'org.awaitility:awaitility'
+    testImplementation 'com.fasterxml.jackson.core:jackson-databind'
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:postgresql'
+    testImplementation 'org.testcontainers:kafka'
+    testRuntimeOnly 'org.postgresql:postgresql'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+    dependsOn ':ingestion-service:bootJar', ':reconciliation-engine:bootJar', ':ai-diagnostic-worker:bootJar'
+    doFirst {
+        systemProperty 'e2e.ingestion.jar', project(':ingestion-service').tasks.named('bootJar').get().archiveFile.get().asFile.absolutePath
+        systemProperty 'e2e.engine.jar', project(':reconciliation-engine').tasks.named('bootJar').get().archiveFile.get().asFile.absolutePath
+        systemProperty 'e2e.worker.jar', project(':ai-diagnostic-worker').tasks.named('bootJar').get().archiveFile.get().asFile.absolutePath
+        systemProperty 'e2e.logs', layout.buildDirectory.dir('e2e-logs').get().asFile.absolutePath
+    }
+    testLogging {
+        events "passed", "failed", "skipped"
+        exceptionFormat "full"
+    }
+}

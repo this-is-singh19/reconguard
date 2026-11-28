@@ -27,6 +27,9 @@ dependencies {
     // Testing Stack (Inherits JUnit version safely via Spring Boot BOM)
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.kafka:spring-kafka-test'
+    // Real Redis + Kafka for the ingestion integration tests (B4). Needs Docker.
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:kafka'
 }
 
 tasks.named('test') {
